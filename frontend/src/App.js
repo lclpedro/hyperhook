@@ -7,7 +7,7 @@ const LinkIcon = ({ className }) => <svg className={className} xmlns="http://www
 const Spinner = () => <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>;
 
 // --- API Helper ---
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:5001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:5001'
 
 const api = {
     async request(endpoint, options = {}) {
@@ -76,7 +76,7 @@ const AuthScreen = ({ onLogin }) => {
         <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white">
             <div className="w-full max-w-md p-8 space-y-8 bg-gray-800 rounded-lg shadow-lg">
                 <h2 className="text-3xl font-extrabold text-center">
-                    {isLogin ? 'Aceder à sua Conta' : 'Criar Nova Conta'}
+                    {isLogin ? 'Login' : 'Criar Nova Conta'}
                 </h2>
                 <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
                     <div className="rounded-md shadow-sm -space-y-px">

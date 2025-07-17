@@ -19,6 +19,7 @@ deploy_backend() {
     fi
     
     echo "🚀 Deploying to Fly.io..."
+    cd backend/ || exit 1
     fly deploy
     
     echo "🔍 Checking deployment..."

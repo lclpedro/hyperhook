@@ -18,7 +18,7 @@ WORKDIR /app
 RUN python -m venv .venv
 
 # Copiar e instalar dependências
-COPY backend/requirements.txt ./
+COPY requirements.txt ./
 RUN .venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # Stage final
@@ -37,7 +37,7 @@ WORKDIR /app
 COPY --from=builder /app/.venv .venv/
 
 # Copiar código do backend
-COPY backend/ ./
+COPY . .
 
 # Criar diretório para dados e logs
 RUN mkdir -p /app/instance /app/logs && \

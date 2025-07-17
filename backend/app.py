@@ -20,12 +20,16 @@ from hyperliquid_client import HyperliquidClient
 # --- Configuração Inicial ---
 app = FastAPI(title="Hyperliquid Trader API", version="1.1.0")
 
+@app.on_event("startup")
+async def startup_event():
+    """Inicialização da aplicação - criar tabelas se necessário"""
+    create_tables_if_needed()
+
 origins = [
     "http://localhost:3000",  # A origem do seu frontend React local
     "http://127.0.0.1:3000", # Outra forma de aceder ao localhost
     "https://hyperhook.fly.dev",  # Backend deployado no Fly.io
-    "https://hyperhook-frontend.fly.dev",  # Frontend deployado no Fly.io (nome planejado)
-    "https://frontend-morning-resonance-9520.fly.dev",  # Frontend atual deployado
+    "https://hyperhook-frontend.fly.dev",  # Frontend deployado no Fly.io
     # IPs do Fly.io para comunicação interna
     "http://52.89.214.238",
     "http://34.212.75.30", 
@@ -349,8 +353,10 @@ def analyze_trade_intent(client, user_address, asset_name, action, position_size
             if is_opposite_direction:
                 # Fechar a posição inteira
                 close_size = current_position["abs_size"]
-                print(f"🔄 FECHAMENTO: Fechando posição {current_side} de {close_size} {asset_name}")
-                return "FECHAMENTO", close_size, {
+                # FORÇAR casas decimais corretas para fechamento
+                forced_close_size = client.force_valid_order_size(asset_name, close_size)
+                print(f"🔄 FECHAMENTO: Fechando posição {current_side} de {close_size} → {forced_close_size} {asset_name}")
+                return "FECHAMENTO", forced_close_size, {
                     "description": f"Fechando posição {current_side} de {close_size}",
                     "current_position": current_position,
                     "action_type": "CLOSE_POSITION",
@@ -362,8 +368,10 @@ def analyze_trade_intent(client, user_address, asset_name, action, position_size
         is_same_direction = (current_side == "LONG" and is_buy) or (current_side == "SHORT" and not is_buy)
         
         if is_same_direction:
-            print(f"📊 DCA: Aumentando posição {current_side} existente de {current_position['abs_size']} com +{contracts}")
-            return "DCA", contracts, {
+            # FORÇAR casas decimais corretas para DCA
+            forced_contracts = client.force_valid_order_size(asset_name, contracts)
+            print(f"📊 DCA: Aumentando posição {current_side} existente de {current_position['abs_size']} com +{contracts} → +{forced_contracts}")
+            return "DCA", forced_contracts, {
                 "description": f"DCA - Aumentando posição {current_side} de {current_position['abs_size']} para {current_position['abs_size'] + contracts}",
                 "current_position": current_position,
                 "action_type": "DCA",
@@ -374,8 +382,10 @@ def analyze_trade_intent(client, user_address, asset_name, action, position_size
         # Cenário 4: REDUÇÃO DE POSIÇÃO - Direção oposta mas não position_size = 0
         if not is_same_direction:
             reduction_size = min(contracts, current_position["abs_size"])
-            print(f"📉 REDUÇÃO: Reduzindo posição {current_side} de {current_position['abs_size']} em {reduction_size}")
-            return "REDUCAO", reduction_size, {
+            # FORÇAR casas decimais corretas para redução
+            forced_reduction_size = client.force_valid_order_size(asset_name, reduction_size)
+            print(f"📉 REDUÇÃO: Reduzindo posição {current_side} de {current_position['abs_size']} em {reduction_size} → {forced_reduction_size}")
+            return "REDUCAO", forced_reduction_size, {
                 "description": f"Reduzindo posição {current_side} de {current_position['abs_size']} em {reduction_size}",
                 "current_position": current_position,
                 "action_type": "REDUCE_POSITION",
@@ -536,11 +546,13 @@ def webhook_trigger(user_uuid: str, asset_name: str, payload: WebhookTriggerPayl
         # Determinar o tamanho da ordem
         order_size = None
         
-        # 1. Prioridade: usar contracts do TradingView
+        # 1. Prioridade: usar contracts do TradingView (FORÇAR casas decimais corretas)
         if contracts:
             try:
-                order_size = float(contracts)
-                print(f"Usando tamanho do TradingView: {order_size}")
+                tv_size = float(contracts)
+                # FORÇA as casas decimais corretas para o ativo
+                order_size = client.force_valid_order_size(asset_name, tv_size)
+                print(f"📺 TradingView: {tv_size} → {order_size} (forçado para {asset_name})")
             except (ValueError, TypeError):
                 print(f"Erro ao converter contracts '{contracts}' para float")
         
@@ -548,6 +560,10 @@ def webhook_trigger(user_uuid: str, asset_name: str, payload: WebhookTriggerPayl
         if order_size is None:
             order_size = client.calculate_order_size(asset_name, config.max_usd_value)
             print(f"Usando valor máximo configurado: {order_size} (baseado em ${config.max_usd_value})")
+        
+        # Validar e ajustar o tamanho da ordem para as regras da Hyperliquid
+        order_size = client.validate_and_fix_order_size(asset_name, order_size)
+        print(f"✅ TAMANHO VALIDADO: {order_size}")
         
         is_buy = action.lower() in ['buy', 'long']
         
@@ -561,7 +577,7 @@ def webhook_trigger(user_uuid: str, asset_name: str, payload: WebhookTriggerPayl
                 print(f"Erro ao converter price '{price_data}' para float")
         
         # Usar o leverage configurado no webhook
-        leverage_to_use = config.leverage
+        leverage_to_use = getattr(config, 'leverage', 1)
         print(f"Usando leverage configurado: {leverage_to_use}x")
         
         result = client.place_order(
@@ -573,7 +589,8 @@ def webhook_trigger(user_uuid: str, asset_name: str, payload: WebhookTriggerPayl
             stop_loss=None,  # Removido - não está no novo formato
             take_profit=None,  # Removido - não está no novo formato
             comment=user_info,  # Usando user_info como comentário
-            is_live_trading=bool(config.is_live_trading)  # NOVO: Flag para trading real
+            is_live_trading=bool(config.is_live_trading),  # NOVO: Flag para trading real
+            leverage=leverage_to_use  # NOVO: Aplicar leverage configurado
         )
         
         print(f"Resultado da Hyperliquid: {result}")
@@ -677,13 +694,21 @@ def generic_webhook_trigger(payload: GenericWebhookPayload, request: Request, db
             print(f"  Tipo: {trade_type}")
             print(f"  Descrição: {trade_details['description']}")
             print(f"  Quantidade original: {contracts}")
-            print(f"  Quantidade ajustada: {adjusted_size}")
+            print(f"  Quantidade ajustada pela análise: {adjusted_size}")
+            
+            # FORÇAR casas decimais corretas no resultado da análise
+            if adjusted_size > 0:
+                forced_adjusted_size = client.force_valid_order_size(asset_name, adjusted_size)
+                print(f"🔧 Quantidade final forçada: {adjusted_size} → {forced_adjusted_size}")
+                adjusted_size = forced_adjusted_size
             
         except Exception as analysis_error:
             print(f"⚠️ Erro na análise de trading: {analysis_error}")
             # Fallback para comportamento original
             trade_type = "ERRO"
-            adjusted_size = float(contracts) if contracts else 0
+            fallback_size = float(contracts) if contracts else 0
+            # FORÇAR casas decimais corretas no fallback também
+            adjusted_size = client.force_valid_order_size(asset_name, fallback_size) if fallback_size > 0 else 0
             trade_details = {
                 "description": f"Erro na análise - usando quantidade original: {str(analysis_error)}",
                 "action_type": "ERROR"
@@ -701,7 +726,9 @@ def generic_webhook_trigger(payload: GenericWebhookPayload, request: Request, db
             else:
                 raise ValueError("Quantidade da ordem é zero e não há valor máximo configurado")
         
-        print(f"✅ TAMANHO FINAL DA ORDEM: {order_size}")
+        # Validar e ajustar o tamanho da ordem para as regras da Hyperliquid
+        order_size = client.validate_and_fix_order_size(asset_name, order_size)
+        print(f"✅ TAMANHO FINAL DA ORDEM (validado): {order_size}")
         
         is_buy = action.lower() in ['buy', 'long']
         
@@ -715,7 +742,7 @@ def generic_webhook_trigger(payload: GenericWebhookPayload, request: Request, db
                 print(f"Erro ao converter price '{price_data}' para float")
         
         # Usar o leverage configurado no webhook
-        leverage_to_use = config.leverage
+        leverage_to_use = getattr(config, 'leverage', 1)
         print(f"Usando leverage configurado: {leverage_to_use}x")
         print(f"Modo: {'🚀 REAL' if bool(config.is_live_trading) else '🔄 SIMULAÇÃO'}")
         
@@ -728,7 +755,8 @@ def generic_webhook_trigger(payload: GenericWebhookPayload, request: Request, db
             stop_loss=None,
             take_profit=None,
             comment=f"{user_info} | {trade_type}: {trade_details['description']}",
-            is_live_trading=bool(config.is_live_trading)
+            is_live_trading=bool(config.is_live_trading),
+            leverage=leverage_to_use
         )
         
         print(f"Resultado da Hyperliquid: {result}")
@@ -897,6 +925,66 @@ def get_all_webhook_logs(current_user: User = Depends(get_current_user), db: Ses
             error_message=log.error_message  # type: ignore
         ))
     return log_responses
+
+# --- Debug Asset Rules ---
+@app.get("/api/debug/asset/{asset_name}")
+async def debug_asset_rules(asset_name: str, current_user: dict = Depends(get_current_user)):
+    """Debug: Mostra as regras específicas de um ativo na Hyperliquid"""
+    try:
+        client = HyperliquidClient()
+        asset_info = client.debug_asset_rules(asset_name)
+        
+        if asset_info:
+            return {
+                "asset_name": asset_name,
+                "sz_decimals": asset_info["szDecimals"],
+                "min_increment": 10 ** (-asset_info["szDecimals"]),
+                "index": asset_info.get("index", "N/A"),
+                "max_leverage": asset_info.get("maxLeverage", "N/A"),
+                "examples": {
+                    "valid_sizes": [
+                        round(1.0, asset_info["szDecimals"]),
+                        round(0.1, asset_info["szDecimals"]),
+                        round(0.01, asset_info["szDecimals"]),
+                        10 ** (-asset_info["szDecimals"])  # Menor incremento
+                    ]
+                }
+            }
+        else:
+            raise HTTPException(status_code=404, detail=f"Asset {asset_name} não encontrado")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar regras do asset: {str(e)}")
+
+# --- Listar Todos os Assets ---
+@app.get("/api/debug/assets")
+async def list_all_assets(current_user: dict = Depends(get_current_user)):
+    """Lista todos os assets disponíveis com suas regras de tamanho"""
+    try:
+        client = HyperliquidClient()
+        meta = client.info.meta()
+        universe = meta["universe"]
+        
+        assets = []
+        for asset_info in universe:
+            assets.append({
+                "name": asset_info["name"],
+                "sz_decimals": asset_info["szDecimals"],
+                "min_increment": 10 ** (-asset_info["szDecimals"]),
+                "index": asset_info.get("index", "N/A"),
+                "max_leverage": asset_info.get("maxLeverage", "N/A")
+            })
+        
+        # Ordenar por nome
+        assets.sort(key=lambda x: x["name"])
+        
+        return {
+            "total_assets": len(assets),
+            "assets": assets
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao listar assets: {str(e)}")
 
 # --- Health Check ---
 @app.get("/health")

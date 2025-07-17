@@ -26,25 +26,82 @@ class HyperliquidClient:
             print(f"Erro ao buscar o estado do usuário: {e}")
             return None
             
-    def calculate_order_size(self, asset_name, max_usd_value):
-        """Calcula o tamanho da ordem na moeda do ativo, com base no valor em USD."""
-        price = self.get_asset_price(asset_name)
-        if price == 0:
-            raise ValueError(f"Não foi possível obter o preço para o ativo {asset_name}")
-        
+    def get_asset_info(self, asset_name):
+        """Busca informações detalhadas do ativo."""
         meta = self.info.meta()
         universe = meta["universe"]
         asset_info = next((item for item in universe if item["name"] == asset_name), None)
         
         if not asset_info:
             raise ValueError(f"Não foi possível encontrar metadados para o ativo {asset_name}")
+        
+        return asset_info
+    
+    def debug_asset_rules(self, asset_name):
+        """Debug: mostra as regras específicas do ativo."""
+        try:
+            asset_info = self.get_asset_info(asset_name)
+            print(f"📊 REGRAS DO ATIVO {asset_name}:")
+            print(f"  szDecimals: {asset_info['szDecimals']} (casas decimais permitidas)")
+            print(f"  Menor incremento: {10 ** (-asset_info['szDecimals'])}")
+            print(f"  Index: {asset_info.get('index', 'N/A')}")
+            return asset_info
+        except Exception as e:
+            print(f"❌ Erro ao buscar regras do ativo {asset_name}: {e}")
+            return None
+
+    def force_valid_order_size(self, asset_name, size):
+        """
+        FORÇA o tamanho da ordem para estar em conformidade com as regras da Hyperliquid.
+        Sempre aplica as regras corretas, independente da fonte dos dados (TradingView, etc.)
+        """
+        try:
+            asset_info = self.get_asset_info(asset_name)
+            sz_decimals = asset_info["szDecimals"]
             
+            # Converter para float
+            original_size = float(size)
+            
+            # FORÇAR o número correto de casas decimais
+            forced_size = round(original_size, sz_decimals)
+            
+            # Verificar tamanho mínimo
+            min_size = 10 ** (-sz_decimals)
+            if forced_size < min_size:
+                forced_size = min_size
+                print(f"🔧 FORÇA: {asset_name} tamanho {original_size} → {forced_size} (mínimo)")
+            elif forced_size != original_size:
+                print(f"🔧 FORÇA: {asset_name} tamanho {original_size} → {forced_size} ({sz_decimals} decimais)")
+            else:
+                print(f"✅ FORÇA: {asset_name} tamanho {forced_size} já válido ({sz_decimals} decimais)")
+            
+            return forced_size
+            
+        except Exception as e:
+            print(f"❌ Erro ao forçar tamanho válido para {asset_name}: {e}")
+            # Fallback: retornar com 2 casas decimais como padrão
+            fallback_size = round(float(size), 2)
+            print(f"🔄 Usando fallback: {size} → {fallback_size} (2 decimais)")
+            return fallback_size
+
+    def validate_and_fix_order_size(self, asset_name, size):
+        """Alias para manter compatibilidade - usa force_valid_order_size"""
+        return self.force_valid_order_size(asset_name, size)
+
+    def calculate_order_size(self, asset_name, max_usd_value):
+        """Calcula o tamanho da ordem na moeda do ativo, com base no valor em USD."""
+        price = self.get_asset_price(asset_name)
+        if price == 0:
+            raise ValueError(f"Não foi possível obter o preço para o ativo {asset_name}")
+        
+        asset_info = self.get_asset_info(asset_name)
         sz_decimals = asset_info["szDecimals"]
         
-        size = round(max_usd_value / price, sz_decimals)
-        return size
+        size = max_usd_value / price
+        validated_size = self.validate_and_fix_order_size(asset_name, size)
+        return validated_size
 
-    def place_order(self, secret_key, asset_name, is_buy, size, limit_price=None, slippage=0.005, stop_loss=None, take_profit=None, comment=None, is_live_trading=False):
+    def place_order(self, secret_key, asset_name, is_buy, size, limit_price=None, slippage=0.005, stop_loss=None, take_profit=None, comment=None, is_live_trading=False, leverage=1, retry_count=0):
         """
         Coloca uma ordem na Hyperliquid.
         Se is_live_trading=True, executa ordem real. Se False, simula.
@@ -57,6 +114,20 @@ class HyperliquidClient:
         
         # 2. Inicializar a classe Exchange com a conta do usuário para esta transação específica
         exchange = Exchange(account, constants.MAINNET_API_URL)
+        
+        # 3. Configurar leverage para o ativo antes de fazer a ordem
+        if is_live_trading:
+            try:
+                # Buscar informações do ativo para obter o índice
+                asset_info = self.get_asset_info(asset_name)
+                asset_index = asset_info.get("index", 0)
+                
+                print(f"⚙️ Configurando leverage {leverage}x para {asset_name}")
+                leverage_result = exchange.update_leverage(leverage, asset_name, is_cross=True)
+                print(f"✅ Leverage configurado: {leverage_result}")
+            except Exception as e:
+                print(f"⚠️ Erro ao configurar leverage: {e}")
+                # Continuar mesmo se falhar para não bloquear a ordem
 
         # 3. Calcular o preço limite com base no slippage para simular uma ordem a mercado
         price = self.get_asset_price(asset_name)
@@ -68,12 +139,13 @@ class HyperliquidClient:
         final_price = None
         
         # NOVA LÓGICA: Para fechamentos de posição, sempre usar ordem de mercado
-        is_closing_position = comment and "FECHAMENTO" in comment
-        is_reducing_position = comment and "REDUCAO" in comment
+        is_closing_position = comment and ("FECHAMENTO" in comment or "CLOSE" in comment.upper())
+        is_reducing_position = comment and ("REDUCAO" in comment or "REDUCE" in comment.upper())
         
         if is_closing_position or is_reducing_position:
-            print(f"🔄 Operação de {'fechamento' if is_closing_position else 'redução'} detectada - usando ordem de mercado para garantir execução")
+            print(f"🔄 Operação de {'fechamento' if is_closing_position else 'redução'} detectada - forçando MARKET ORDER")
             use_custom_price = False
+            limit_price = None  # Garantir que seja market order
         elif limit_price is not None:
             price_diff_percent = abs(limit_price - price) / price
             if price_diff_percent > 0.05:  # Máximo 5% de diferença
@@ -202,6 +274,27 @@ class HyperliquidClient:
             elif "error" in order_status:
                 error_msg = order_status["error"]
                 print(f"❌ Erro na ordem: {error_msg}")
+                
+                # Se erro é de matching e ainda não tentamos market order, tentar novamente
+                if ("could not immediately match" in error_msg.lower() and 
+                    limit_price is not None and 
+                    retry_count == 0):
+                    print(f"🔄 Tentando novamente com MARKET ORDER...")
+                    return self.place_order(
+                        secret_key=secret_key,
+                        asset_name=asset_name,
+                        is_buy=is_buy,
+                        size=size,
+                        limit_price=None,  # Forçar market order
+                        slippage=slippage,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit,
+                        comment=f"{comment} [MARKET-RETRY]" if comment else "[MARKET-RETRY]",
+                        is_live_trading=is_live_trading,
+                        leverage=leverage,
+                        retry_count=1  # Evitar loop infinito
+                    )
+                
                 raise Exception(f"Falha ao colocar a ordem: {error_msg}")
             else:
                 print(f"❓ Status da ordem desconhecido: {order_status}")

@@ -1,12 +1,15 @@
-# fly.toml app configuration file generated for frontend-morning-resonance-9520 on 2025-07-16T22:12:13-03:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
-app = 'frontend-morning-resonance-9520'
+# fly.toml app configuration file para o frontend React
+app = 'hyperhook-frontend'
 primary_region = 'gig'
 
 [build]
+  dockerfile = "./Dockerfile"
+
+[build.args]
+  REACT_APP_API_URL = "https://hyperhook.fly.dev"
+  
+[env]
+  TZ = "America/Sao_Paulo"
 
 [http_service]
   internal_port = 8080
@@ -15,6 +18,16 @@ primary_region = 'gig'
   auto_start_machines = true
   min_machines_running = 0
   processes = ['app']
+
+  # Health checks usando o endpoint que criamos
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+    timeout = "10s"
+    tls_skip_verify = false
 
 [[vm]]
   memory = '1gb'
