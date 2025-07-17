@@ -21,8 +21,19 @@ from hyperliquid_client import HyperliquidClient
 app = FastAPI(title="Hyperliquid Trader API", version="1.1.0")
 
 origins = [
-    "http://localhost:3000",  # A origem do seu frontend React
+    "http://localhost:3000",  # A origem do seu frontend React local
     "http://127.0.0.1:3000", # Outra forma de aceder ao localhost
+    "https://hyperhook.fly.dev",  # Backend deployado no Fly.io
+    "https://hyperhook-frontend.fly.dev",  # Frontend deployado no Fly.io
+    # IPs do Fly.io para comunicação interna
+    "http://52.89.214.238",
+    "http://34.212.75.30", 
+    "http://54.218.53.128",
+    "http://52.32.178.7",
+    "https://52.89.214.238",
+    "https://34.212.75.30", 
+    "https://54.218.53.128",
+    "https://52.32.178.7",
 ]
 
 app.add_middleware(
@@ -39,7 +50,12 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 semana
 
 # Database - PostgreSQL com connection string
-DB_CONNECTION_STRING = os.environ.get('DB_CONNECTION_STRING', 'postgresql://postgres:postgres@localhost:5432/hyperliquid_trader')
+DB_CONNECTION_STRING = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/hyperliquid_trader')
+
+# Fix para SQLAlchemy 2.x - converter postgres:// para postgresql://
+if DB_CONNECTION_STRING.startswith('postgres://'):
+    DB_CONNECTION_STRING = DB_CONNECTION_STRING.replace('postgres://', 'postgresql://', 1)
+
 engine = create_engine(DB_CONNECTION_STRING)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -278,6 +294,111 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if user is None:
         raise credentials_exception
     return user
+
+def analyze_trade_intent(client, user_address, asset_name, action, position_size_str, contracts_str):
+    """
+    Analisa a intenção de trading para determinar se é:
+    - Fechamento de posição (position_size = 0)
+    - DCA (Dollar Cost Average) - aumentar posição existente
+    - Nova posição
+    
+    Retorna: (tipo_operacao, quantidade_ajustada, detalhes)
+    """
+    try:
+        # Obter posições atuais do usuário
+        user_state = client.get_user_state(user_address)
+        current_positions = {}
+        
+        if user_state and "assetPositions" in user_state:
+            for pos in user_state["assetPositions"]:
+                if "position" in pos:
+                    position_data = pos["position"]
+                    coin = position_data.get("coin", "")
+                    size = float(position_data.get("szi", "0"))
+                    if size != 0:  # Apenas posições abertas
+                        current_positions[coin] = {
+                            "size": size,
+                            "side": "LONG" if size > 0 else "SHORT",
+                            "abs_size": abs(size),
+                            "unrealized_pnl": float(position_data.get("unrealizedPnl", "0"))
+                        }
+        
+        print(f"🔍 Posições atuais: {current_positions}")
+        
+        # Verificar se já tem posição no ativo
+        current_position = current_positions.get(asset_name)
+        is_buy = action.lower() in ['buy', 'long']
+        position_size = float(position_size_str) if position_size_str and position_size_str.strip() else 0
+        contracts = float(contracts_str) if contracts_str and contracts_str.strip() else 0
+        
+        # Cenário 1: SEM POSIÇÃO ATUAL - Nova posição
+        if not current_position:
+            print("📈 NOVA POSIÇÃO: Nenhuma posição existente encontrada")
+            return "NOVA_POSICAO", contracts, {
+                "description": "Abrindo nova posição",
+                "current_position": None,
+                "action_type": "NEW_POSITION"
+            }
+        
+        # Cenário 2: FECHAMENTO DE POSIÇÃO - position_size = 0 e direção oposta
+        if position_size == 0:
+            current_side = current_position["side"]
+            is_opposite_direction = (current_side == "LONG" and not is_buy) or (current_side == "SHORT" and is_buy)
+            
+            if is_opposite_direction:
+                # Fechar a posição inteira
+                close_size = current_position["abs_size"]
+                print(f"🔄 FECHAMENTO: Fechando posição {current_side} de {close_size} {asset_name}")
+                return "FECHAMENTO", close_size, {
+                    "description": f"Fechando posição {current_side} de {close_size}",
+                    "current_position": current_position,
+                    "action_type": "CLOSE_POSITION",
+                    "original_size": current_position["abs_size"]
+                }
+        
+        # Cenário 3: DCA - Mesma direção da posição existente
+        current_side = current_position["side"]
+        is_same_direction = (current_side == "LONG" and is_buy) or (current_side == "SHORT" and not is_buy)
+        
+        if is_same_direction:
+            print(f"📊 DCA: Aumentando posição {current_side} existente de {current_position['abs_size']} com +{contracts}")
+            return "DCA", contracts, {
+                "description": f"DCA - Aumentando posição {current_side} de {current_position['abs_size']} para {current_position['abs_size'] + contracts}",
+                "current_position": current_position,
+                "action_type": "DCA",
+                "original_size": current_position["abs_size"],
+                "new_total_size": current_position["abs_size"] + contracts
+            }
+        
+        # Cenário 4: REDUÇÃO DE POSIÇÃO - Direção oposta mas não position_size = 0
+        if not is_same_direction:
+            reduction_size = min(contracts, current_position["abs_size"])
+            print(f"📉 REDUÇÃO: Reduzindo posição {current_side} de {current_position['abs_size']} em {reduction_size}")
+            return "REDUCAO", reduction_size, {
+                "description": f"Reduzindo posição {current_side} de {current_position['abs_size']} em {reduction_size}",
+                "current_position": current_position,
+                "action_type": "REDUCE_POSITION",
+                "original_size": current_position["abs_size"],
+                "reduction_amount": reduction_size,
+                "remaining_size": current_position["abs_size"] - reduction_size
+            }
+        
+        # Fallback - usar quantidade original
+        return "PADRAO", contracts, {
+            "description": "Usando quantidade padrão do payload",
+            "current_position": current_position,
+            "action_type": "DEFAULT"
+        }
+        
+    except Exception as e:
+        print(f"⚠️ Erro ao analisar intenção de trading: {e}")
+        # Em caso de erro, usar quantidade original
+        contracts = float(contracts_str) if contracts_str and contracts_str.strip() else 0
+        return "ERRO", contracts, {
+            "description": f"Erro na análise - usando quantidade original: {str(e)}",
+            "current_position": None,
+            "action_type": "ERROR"
+        }
 
 # --- Rotas ---
 @app.post("/register", status_code=status.HTTP_201_CREATED)
@@ -534,22 +655,52 @@ def generic_webhook_trigger(payload: GenericWebhookPayload, request: Request, db
         symbol = payload.symbol
         price_data = payload.price
         user_info = payload.user_info
+        position_size = payload.data.position_size
         
-        # Determinar o tamanho da ordem
-        order_size = None
+        # NOVA FUNCIONALIDADE: Análise inteligente da intenção de trading
+        print(f"\n🧠 ANALISANDO INTENÇÃO DE TRADING...")
+        print(f"Action: {action}, Contracts: {contracts}, Position Size: {position_size}")
         
-        # 1. Prioridade: usar contracts do TradingView
-        if contracts:
-            try:
-                order_size = float(contracts)
-                print(f"Usando tamanho do TradingView: {order_size}")
-            except (ValueError, TypeError):
-                print(f"Erro ao converter contracts '{contracts}' para float")
+        try:
+            # Analisar se é fechamento, DCA, nova posição, etc.
+            trade_type, adjusted_size, trade_details = analyze_trade_intent(
+                client=client,
+                user_address=user.wallet.public_address,
+                asset_name=asset_name,
+                action=action,
+                position_size_str=position_size,
+                contracts_str=contracts
+            )
+            
+            print(f"🎯 RESULTADO DA ANÁLISE:")
+            print(f"  Tipo: {trade_type}")
+            print(f"  Descrição: {trade_details['description']}")
+            print(f"  Quantidade original: {contracts}")
+            print(f"  Quantidade ajustada: {adjusted_size}")
+            
+        except Exception as analysis_error:
+            print(f"⚠️ Erro na análise de trading: {analysis_error}")
+            # Fallback para comportamento original
+            trade_type = "ERRO"
+            adjusted_size = float(contracts) if contracts else 0
+            trade_details = {
+                "description": f"Erro na análise - usando quantidade original: {str(analysis_error)}",
+                "action_type": "ERROR"
+            }
         
-        # 2. Fallback: calcular baseado no valor máximo configurado
-        if order_size is None:
-            order_size = client.calculate_order_size(asset_name, config.max_usd_value)
-            print(f"Usando valor máximo configurado: {order_size} (baseado em ${config.max_usd_value})")
+        # Determinar o tamanho da ordem (usar o ajustado pela análise)
+        order_size = adjusted_size
+        
+        # Se a análise resultou em tamanho 0, usar fallback
+        if order_size == 0:
+            max_usd_value = getattr(config, 'max_usd_value', 0)
+            if max_usd_value and max_usd_value > 0:
+                order_size = client.calculate_order_size(asset_name, max_usd_value)
+                print(f"⚠️ Quantidade zero detectada - usando valor máximo configurado: {order_size} (baseado em ${max_usd_value})")
+            else:
+                raise ValueError("Quantidade da ordem é zero e não há valor máximo configurado")
+        
+        print(f"✅ TAMANHO FINAL DA ORDEM: {order_size}")
         
         is_buy = action.lower() in ['buy', 'long']
         
@@ -575,7 +726,7 @@ def generic_webhook_trigger(payload: GenericWebhookPayload, request: Request, db
             limit_price=limit_price,
             stop_loss=None,
             take_profit=None,
-            comment=user_info,
+            comment=f"{user_info} | {trade_type}: {trade_details['description']}",
             is_live_trading=bool(config.is_live_trading)
         )
         
@@ -593,6 +744,13 @@ def generic_webhook_trigger(payload: GenericWebhookPayload, request: Request, db
                 "symbol": symbol,
                 "user_info": user_info,
                 "is_live_trading": bool(config.is_live_trading)
+            },
+            "trade_analysis": {
+                "type": trade_type,
+                "description": trade_details["description"],
+                "original_contracts": contracts,
+                "adjusted_size": order_size,
+                "details": trade_details
             }
         }
         
@@ -738,6 +896,35 @@ def get_all_webhook_logs(current_user: User = Depends(get_current_user), db: Ses
             error_message=log.error_message  # type: ignore
         ))
     return log_responses
+
+# --- Health Check ---
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker/Fly.io monitoring"""
+    try:
+        # Test database connection
+        from sqlalchemy import text
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "hyperliquid-trader-api",
+            "database": "connected"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "timestamp": datetime.utcnow().isoformat(),
+                "service": "hyperliquid-trader-api",
+                "database": "disconnected",
+                "error": str(e)
+            }
+        )
 
 if __name__ == "__main__":
     import uvicorn

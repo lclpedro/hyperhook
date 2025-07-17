@@ -67,7 +67,14 @@ class HyperliquidClient:
         use_custom_price = False
         final_price = None
         
-        if limit_price is not None:
+        # NOVA LÓGICA: Para fechamentos de posição, sempre usar ordem de mercado
+        is_closing_position = comment and "FECHAMENTO" in comment
+        is_reducing_position = comment and "REDUCAO" in comment
+        
+        if is_closing_position or is_reducing_position:
+            print(f"🔄 Operação de {'fechamento' if is_closing_position else 'redução'} detectada - usando ordem de mercado para garantir execução")
+            use_custom_price = False
+        elif limit_price is not None:
             price_diff_percent = abs(limit_price - price) / price
             if price_diff_percent > 0.05:  # Máximo 5% de diferença
                 print(f"⚠️ Preço fornecido ({limit_price}) está {price_diff_percent:.1%} longe do preço de mercado ({price})")
@@ -78,7 +85,8 @@ class HyperliquidClient:
                 final_price = limit_price
                 print(f"Usando preço fornecido: {final_price}")
         
-        print(f"💰 Preço de mercado: {price}, Modo: {'Preço Específico' if use_custom_price else 'Mercado'}, Slippage: {slippage:.1%}")
+        operation_mode = "Fechamento/Redução" if (is_closing_position or is_reducing_position) else ("Preço Específico" if use_custom_price else "Mercado")
+        print(f"💰 Preço de mercado: {price}, Modo: {operation_mode}, Slippage: {slippage:.1%}")
 
         if is_live_trading:
             print(f"🚀 EXECUTANDO ORDEM REAL: Ativo {asset_name}, Compra: {is_buy}, Tamanho: {size}")
@@ -96,8 +104,9 @@ class HyperliquidClient:
                         reduce_only=False
                     )
                 else:
-                    # Usar market_open() para ordens de mercado verdadeiras
-                    print(f"📈 Usando ordem de mercado com slippage: {slippage:.1%}")
+                    # Usar market_open() para ordens de mercado (fechamentos, reduções, etc.)
+                    operation_type = "fechamento/redução" if (is_closing_position or is_reducing_position) else "mercado"
+                    print(f"📈 Usando ordem de mercado para {operation_type} com slippage: {slippage:.1%}")
                     order_result = exchange.market_open(
                         name=asset_name,
                         is_buy=is_buy,

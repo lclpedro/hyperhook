@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: hyperliquid-postgres
+    environment:
+      POSTGRES_DB: hyperliquid_trader
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: hyperliquid-app
+    ports:
+      - "5001:5001"
+    environment:
+      - DB_CONNECTION_STRING=postgresql://postgres:postgres@postgres:5432/hyperliquid_trader
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-super-secret-jwt-key-for-dev-do-not-use-in-prod}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-TvI0pq4KaZkYQ1Zd2J7xN8rU5gM3eW9nY6sL7hT4vC0=}
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data: 

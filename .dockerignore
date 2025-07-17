@@ -1,0 +1,40 @@
+# Configuração do Fly.io
+fly.toml
+.fly/
+
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.venv/
+venv/
+.env
+.envrc
+
+# Frontend (não precisamos no backend)
+frontend/
+node_modules/
+
+# Desenvolvimento
+.vscode/
+.idea/
+*.log
+.DS_Store
+
+# Database local
+*.db
+*.sqlite3
+
+# Documentação
+README.md
+*.md
+
+# Cache
+.pytest_cache/

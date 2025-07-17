@@ -1,0 +1,31 @@
+app = 'hyperhook'
+primary_region = 'gig'
+
+[build]
+  dockerfile = "./Dockerfile"
+
+[env]
+  TZ = "America/Sao_Paulo"
+
+[http_service]
+  internal_port = 5001
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  # Health checks usando o endpoint que criamos
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+    timeout = "10s"
+    tls_skip_verify = false
+
+[[vm]]
+  memory = '2gb'
+  cpu_kind = 'shared'
+  cpus = 1 
