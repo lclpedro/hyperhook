@@ -1,6 +1,7 @@
 __pycache__/
 .env/
 env/
+env
 env/bin/
 env/lib/
 .venv/
