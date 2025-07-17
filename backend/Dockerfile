@@ -60,4 +60,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=40s --retries=3 \
 EXPOSE ${PORT}
 
 # Comando para iniciar a aplicação
-CMD ["/bin/sh", "-c", "/app/.venv/bin/uvicorn app:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["/bin/sh", "-c", "/app/.venv/bin/uvicorn app:app --host 0.0.0.0 --port ${PORT}"] 

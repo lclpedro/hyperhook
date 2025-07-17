@@ -24,7 +24,8 @@ origins = [
     "http://localhost:3000",  # A origem do seu frontend React local
     "http://127.0.0.1:3000", # Outra forma de aceder ao localhost
     "https://hyperhook.fly.dev",  # Backend deployado no Fly.io
-    "https://hyperhook-frontend.fly.dev",  # Frontend deployado no Fly.io
+    "https://hyperhook-frontend.fly.dev",  # Frontend deployado no Fly.io (nome planejado)
+    "https://frontend-morning-resonance-9520.fly.dev",  # Frontend atual deployado
     # IPs do Fly.io para comunicação interna
     "http://52.89.214.238",
     "http://34.212.75.30", 
