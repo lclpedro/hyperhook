@@ -7,7 +7,7 @@ const LinkIcon = ({ className }) => <svg className={className} xmlns="http://www
 const Spinner = () => <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>;
 
 // --- API Helper ---
-const API_BASE_URL = 'http://127.0.0.1:5001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:5001';
 
 const api = {
     async request(endpoint, options = {}) {
