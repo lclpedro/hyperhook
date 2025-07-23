@@ -15,7 +15,7 @@ class DashboardService:
         self.db = db
         self.pnl_calculator = PnlCalculator(db)
     
-    def get_dashboard_summary(self, user_id: int) -> Dict:
+    def get_dashboard_summary(self, user_id: int, period: str = "7d") -> Dict:
         """Obtém resumo completo do dashboard"""
         
         # Snapshot da conta mais recente
@@ -45,10 +45,12 @@ class DashboardService:
                 "timestamp": latest_snapshot.timestamp.isoformat()
             }
         
-        # PNL do período (últimos 30 dias)
+        # PNL do período baseado no parâmetro
         today = datetime.now(timezone.utc).date()
-        month_ago = today - timedelta(days=30)
-        period_pnl_data = self._get_period_pnl(user_id, month_ago, today)
+        days_map = {"1d": 1, "7d": 7, "30d": 30, "90d": 90}
+        days = days_map.get(period, 7)
+        period_start = today - timedelta(days=days)
+        period_pnl_data = self._get_period_pnl(user_id, period_start, today)
         period_pnl = period_pnl_data.get("period_pnl", 0.0)
         
         # Trades do período
@@ -86,7 +88,7 @@ class DashboardService:
             "assets_pnl": assets_pnl_formatted
         }
     
-    def get_assets_performance(self, user_id: int) -> List[Dict]:
+    def get_assets_performance(self, user_id: int, period: str = "7d") -> List[Dict]:
         """Obtém performance por ativo"""
         
         pnl_summaries = self.db.query(WebhookPnlSummary).filter(
@@ -188,6 +190,16 @@ class DashboardService:
         
         return {
             "asset_name": asset_name,
+            "total_trades": len(trades),
+            "winning_trades": pnl_summary.winning_trades if pnl_summary else 0,
+            "losing_trades": pnl_summary.losing_trades if pnl_summary else 0,
+            "total_realized_pnl": pnl_summary.total_realized_pnl if pnl_summary else 0,
+            "total_unrealized_pnl": pnl_summary.total_unrealized_pnl if pnl_summary else 0,
+            "total_pnl": pnl_summary.net_pnl if pnl_summary else 0,
+            "net_pnl": pnl_summary.net_pnl if pnl_summary else 0,
+            "total_fees": pnl_summary.total_fees if pnl_summary else 0,
+            "win_rate": pnl_summary.win_rate if pnl_summary else 0,
+            "total_volume": pnl_summary.total_volume if pnl_summary else 0,
             "summary": {
                 "total_trades": len(trades),
                 "realized_pnl": pnl_summary.total_realized_pnl if pnl_summary else 0,

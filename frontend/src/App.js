@@ -350,6 +350,10 @@ const DashboardScreen = ({ token }) => {
   const [selectedPeriod, setSelectedPeriod] = useState('7d');
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [assetDetails, setAssetDetails] = useState(null);
+  const [webhookExecutions, setWebhookExecutions] = useState([]);
+  const [webhookPagination, setWebhookPagination] = useState({});
+  const [selectedWebhook, setSelectedWebhook] = useState(null);
+  const [webhookDetails, setWebhookDetails] = useState(null);
 
   const periods = [
     { value: '1d', label: '1 Dia' },
@@ -363,8 +367,8 @@ const DashboardScreen = ({ token }) => {
       try {
         setLoading(true);
         const [summary, assets] = await Promise.all([
-          api.get('/api/dashboard/summary', token),
-          api.get('/api/dashboard/assets', token)
+          api.get(`/api/dashboard/summary?period=${selectedPeriod}`, token),
+          api.get(`/api/dashboard/assets?period=${selectedPeriod}`, token)
         ]);
         setDashboardData(summary);
         setAssetsPerformance(assets);
@@ -376,15 +380,41 @@ const DashboardScreen = ({ token }) => {
     };
 
     fetchDashboardData();
-  }, [token]);
+  }, [token, selectedPeriod]);
 
   const fetchAssetDetails = async (asset) => {
     try {
-      const details = await api.get(`/api/dashboard/asset/${asset}/performance?period=${selectedPeriod}`, token);
+      const details = await api.get(`/api/dashboard/assets/${asset}?period=${selectedPeriod}`, token);
       setAssetDetails(details);
       setSelectedAsset(asset);
+      // Buscar webhooks também
+      fetchWebhookExecutions(asset, 1);
     } catch (err) {
       console.error('Error fetching asset details:', err);
+    }
+  };
+
+  const fetchWebhookExecutions = async (asset, page = 1, limit = 10) => {
+    try {
+      const response = await api.get(`/api/dashboard/assets/${asset}/webhooks?page=${page}&limit=${limit}`, token);
+      setWebhookExecutions(response.webhooks);
+      setWebhookPagination(response.pagination);
+    } catch (err) {
+      console.error('Error fetching webhook executions:', err);
+    }
+  };
+
+  const fetchWebhookDetails = async (webhookId) => {
+    try {
+      console.log('Fetching webhook details for ID:', webhookId);
+      const details = await api.get(`/api/dashboard/webhooks/${webhookId}`, token);
+      console.log('Webhook details received:', details);
+      setWebhookDetails(details);
+      setSelectedWebhook(webhookId);
+    } catch (err) {
+      console.error('Error fetching webhook details:', err);
+      console.error('Error details:', err.response?.data || err.message);
+      alert(`Erro ao buscar detalhes do webhook: ${err.response?.data?.detail || err.message}`);
     }
   };
 
@@ -404,11 +434,11 @@ const DashboardScreen = ({ token }) => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-400">PNL Total</p>
-                <p className={`text-2xl font-bold ${dashboardData.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  ${dashboardData.total_pnl?.toFixed(2) || '0.00'}
+                <p className={`text-2xl font-bold ${dashboardData.period_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  ${dashboardData.period_pnl?.toFixed(2) || '0.00'}
                 </p>
               </div>
-              {dashboardData.total_pnl >= 0 ? 
+              {dashboardData.period_pnl >= 0 ? 
                 <TrendingUpIcon className="w-8 h-8 text-green-400" /> : 
                 <TrendingDownIcon className="w-8 h-8 text-red-400" />
               }
@@ -419,7 +449,7 @@ const DashboardScreen = ({ token }) => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-400">Total de Trades</p>
-                <p className="text-2xl font-bold text-white">{dashboardData.total_trades || 0}</p>
+                <p className="text-2xl font-bold text-white">{dashboardData.period_trades || 0}</p>
               </div>
               <ChartBarIcon className="w-8 h-8 text-blue-400" />
             </div>
@@ -429,7 +459,9 @@ const DashboardScreen = ({ token }) => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-400">Trades Vencedores</p>
-                <p className="text-2xl font-bold text-green-400">{dashboardData.winning_trades || 0}</p>
+                <p className="text-2xl font-bold text-green-400">
+                  {dashboardData.assets_pnl?.reduce((sum, asset) => sum + (asset.winning_trades || 0), 0) || 0}
+                </p>
               </div>
               <TrendingUpIcon className="w-8 h-8 text-green-400" />
             </div>
@@ -438,14 +470,12 @@ const DashboardScreen = ({ token }) => {
           <div className="bg-gray-800 p-6 rounded-lg shadow-md border border-gray-700">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-400">Taxa de Sucesso</p>
-                <p className="text-2xl font-bold text-blue-400">
-                  {dashboardData.total_trades > 0 ? 
-                    ((dashboardData.winning_trades / dashboardData.total_trades) * 100).toFixed(1) : '0.0'
-                  }%
+                <p className="text-sm font-medium text-gray-400">Trades Perdedores</p>
+                <p className="text-2xl font-bold text-red-400">
+                  {dashboardData.assets_pnl?.reduce((sum, asset) => sum + (asset.losing_trades || 0), 0) || 0}
                 </p>
               </div>
-              <ChartBarIcon className="w-8 h-8 text-blue-400" />
+              <TrendingDownIcon className="w-8 h-8 text-red-400" />
             </div>
           </div>
         </div>
@@ -468,27 +498,25 @@ const DashboardScreen = ({ token }) => {
                   <tr className="border-b border-gray-700">
                     <th className="text-left py-3 px-4 font-medium text-gray-400">Ativo</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-400">PNL</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-400">Trades</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-400">Taxa Sucesso</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-400">Total</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-400">Vencedores</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-400">Perdedores</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-400">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {assetsPerformance.map((asset, index) => (
                     <tr key={index} className="border-b border-gray-600 hover:bg-gray-700">
-                      <td className="py-3 px-4 font-medium text-white">{asset.asset}</td>
-                      <td className={`py-3 px-4 font-medium ${asset.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        ${asset.total_pnl?.toFixed(2) || '0.00'}
+                      <td className="py-3 px-4 font-medium text-white">{asset.asset_name}</td>
+                      <td className={`py-3 px-4 font-medium ${asset.total_realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${asset.total_realized_pnl?.toFixed(2) || '0.00'}
                       </td>
                       <td className="py-3 px-4 text-gray-300">{asset.total_trades || 0}</td>
-                      <td className="py-3 px-4 text-gray-300">
-                        {asset.total_trades > 0 ? 
-                          ((asset.winning_trades / asset.total_trades) * 100).toFixed(1) : '0.0'
-                        }%
-                      </td>
+                      <td className="py-3 px-4 text-green-400 font-medium">{asset.winning_trades || 0}</td>
+                      <td className="py-3 px-4 text-red-400 font-medium">{asset.losing_trades || 0}</td>
                       <td className="py-3 px-4">
                         <button
-                          onClick={() => fetchAssetDetails(asset.asset)}
+                          onClick={() => fetchAssetDetails(asset.asset_name)}
                           className="text-blue-400 hover:text-blue-300 font-medium"
                         >
                           Ver Detalhes
@@ -536,7 +564,7 @@ const DashboardScreen = ({ token }) => {
               </div>
             </div>
             <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 <div className="bg-gray-700 p-4 rounded-lg">
                   <p className="text-sm font-medium text-gray-400">PNL Total</p>
                   <p className={`text-xl font-bold ${assetDetails.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -548,12 +576,12 @@ const DashboardScreen = ({ token }) => {
                   <p className="text-xl font-bold text-white">{assetDetails.total_trades || 0}</p>
                 </div>
                 <div className="bg-gray-700 p-4 rounded-lg">
-                  <p className="text-sm font-medium text-gray-400">Taxa de Sucesso</p>
-                  <p className="text-xl font-bold text-blue-400">
-                    {assetDetails.total_trades > 0 ? 
-                      ((assetDetails.winning_trades / assetDetails.total_trades) * 100).toFixed(1) : '0.0'
-                    }%
-                  </p>
+                  <p className="text-sm font-medium text-gray-400">Trades Vencedores</p>
+                  <p className="text-xl font-bold text-green-400">{assetDetails.winning_trades || 0}</p>
+                </div>
+                <div className="bg-gray-700 p-4 rounded-lg">
+                  <p className="text-sm font-medium text-gray-400">Trades Perdedores</p>
+                  <p className="text-xl font-bold text-red-400">{assetDetails.losing_trades || 0}</p>
                 </div>
               </div>
               
@@ -597,6 +625,269 @@ const DashboardScreen = ({ token }) => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Webhook Executions Section */}
+              <div className="mt-8">
+                <h4 className="text-lg font-medium text-white mb-4">Execuções de Webhooks</h4>
+                {webhookExecutions.length > 0 ? (
+                  <div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full">
+                        <thead>
+                          <tr className="border-b border-gray-600">
+                            <th className="text-left py-2 px-3 text-sm font-medium text-gray-400">Data</th>
+                            <th className="text-left py-2 px-3 text-sm font-medium text-gray-400">Tipo</th>
+                            <th className="text-left py-2 px-3 text-sm font-medium text-gray-400">Lado</th>
+                            <th className="text-left py-2 px-3 text-sm font-medium text-gray-400">Quantidade</th>
+                            <th className="text-left py-2 px-3 text-sm font-medium text-gray-400">Preço</th>
+                            <th className="text-left py-2 px-3 text-sm font-medium text-gray-400">Valor USD</th>
+                            <th className="text-left py-2 px-3 text-sm font-medium text-gray-400">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {webhookExecutions.map((webhook, index) => (
+                            <tr key={index} className="border-b border-gray-700">
+                              <td className="py-2 px-3 text-sm text-gray-300">
+                                {new Date(webhook.timestamp).toLocaleString('pt-BR')}
+                              </td>
+                              <td className="py-2 px-3 text-sm">
+                                <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                  webhook.trade_type === 'FECHAMENTO' ? 'bg-red-900 text-red-200' :
+                                  webhook.trade_type === 'DCA' ? 'bg-blue-900 text-blue-200' :
+                                  webhook.trade_type === 'REDUCAO' ? 'bg-yellow-900 text-yellow-200' :
+                                  'bg-gray-900 text-gray-200'
+                                }`}>
+                                  {webhook.trade_type}
+                                </span>
+                              </td>
+                              <td className={`py-2 px-3 text-sm font-medium ${
+                                webhook.side === 'LONG' ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                {webhook.side}
+                              </td>
+                              <td className="py-2 px-3 text-sm text-gray-300">
+                                {webhook.quantity}
+                              </td>
+                              <td className="py-2 px-3 text-sm text-gray-300">
+                                ${webhook.price?.toFixed(6) || '0.000000'}
+                              </td>
+                              <td className="py-2 px-3 text-sm text-gray-300">
+                                ${webhook.usd_value?.toFixed(4) || '0.0000'}
+                              </td>
+                              <td className="py-2 px-3">
+                                <button
+                                  onClick={() => fetchWebhookDetails(webhook.id)}
+                                  className="text-blue-400 hover:text-blue-300 text-sm font-medium"
+                                >
+                                  Ver Detalhes
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    
+                    {/* Pagination Controls */}
+                    {webhookPagination.total_pages > 1 && (
+                      <div className="flex justify-between items-center mt-4">
+                        <div className="text-sm text-gray-400">
+                          Página {webhookPagination.current_page} de {webhookPagination.total_pages} 
+                          ({webhookPagination.total_items} itens)
+                        </div>
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => fetchWebhookExecutions(selectedAsset, webhookPagination.current_page - 1)}
+                            disabled={!webhookPagination.has_prev}
+                            className="px-3 py-1 bg-gray-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600"
+                          >
+                            Anterior
+                          </button>
+                          <button
+                            onClick={() => fetchWebhookExecutions(selectedAsset, webhookPagination.current_page + 1)}
+                            disabled={!webhookPagination.has_next}
+                            className="px-3 py-1 bg-gray-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600"
+                          >
+                            Próxima
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-400 py-8">
+                    <p>Nenhuma execução de webhook encontrada.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Webhook Details Modal */}
+      {selectedWebhook && webhookDetails && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-700">
+            <div className="p-6 border-b border-gray-700">
+              <div className="flex justify-between items-center">
+                <h3 className="text-xl font-semibold text-white">
+                  Detalhes da Execução #{selectedWebhook}
+                </h3>
+                <button
+                  onClick={() => setSelectedWebhook(null)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  <XIcon className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              {/* Execution Info */}
+              <div className="mb-6">
+                <h4 className="text-lg font-medium text-white mb-3">Informações da Execução</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-sm text-gray-400">Ativo</p>
+                    <p className="text-white font-medium">{webhookDetails.webhook_execution.asset_name}</p>
+                  </div>
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-sm text-gray-400">Tipo</p>
+                    <p className="text-white font-medium">
+                      {webhookDetails.webhook_execution.trade_type} {webhookDetails.webhook_execution.side}
+                    </p>
+                  </div>
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-sm text-gray-400">Quantidade</p>
+                    <p className="text-white font-medium">{webhookDetails.webhook_execution.quantity}</p>
+                  </div>
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-sm text-gray-400">Preço</p>
+                    <p className="text-white font-medium">${webhookDetails.webhook_execution.price?.toFixed(6)}</p>
+                  </div>
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-sm text-gray-400">Valor USD</p>
+                    <p className="text-white font-medium">${webhookDetails.webhook_execution.usd_value?.toFixed(4)}</p>
+                  </div>
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-sm text-gray-400">Leverage</p>
+                    <p className="text-white font-medium">{webhookDetails.webhook_execution.leverage}x</p>
+                  </div>
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-sm text-gray-400">Taxas</p>
+                    <p className="text-white font-medium">${webhookDetails.webhook_execution.fees?.toFixed(6) || '0.000000'}</p>
+                  </div>
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-sm text-gray-400">Data/Hora</p>
+                    <p className="text-white font-medium">
+                      {new Date(webhookDetails.webhook_execution.timestamp).toLocaleString('pt-BR')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Webhook Config Info */}
+              {webhookDetails.webhook_config && (
+                <div className="mb-6">
+                  <h4 className="text-lg font-medium text-white mb-3">Configuração do Webhook</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Ativo</p>
+                      <p className="text-white font-medium">{webhookDetails.webhook_config.asset_name}</p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Valor Máximo USD</p>
+                      <p className="text-white font-medium">${webhookDetails.webhook_config.max_usd_value}</p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Leverage</p>
+                      <p className="text-white font-medium">{webhookDetails.webhook_config.leverage}x</p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Trading ao Vivo</p>
+                      <p className={`font-medium ${webhookDetails.webhook_config.is_live_trading ? 'text-green-400' : 'text-red-400'}`}>
+                        {webhookDetails.webhook_config.is_live_trading ? 'Ativo' : 'Inativo'}
+                      </p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Símbolo Hyperliquid</p>
+                      <p className="text-white font-medium">{webhookDetails.webhook_config.hyperliquid_symbol || 'N/A'}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Position Info */}
+              {webhookDetails.position && (
+                <div className="mb-6">
+                  <h4 className="text-lg font-medium text-white mb-3">Informações da Posição</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Status</p>
+                      <p className={`font-medium ${webhookDetails.position.is_open ? 'text-green-400' : 'text-red-400'}`}>
+                        {webhookDetails.position.is_open ? 'Aberta' : 'Fechada'}
+                      </p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Lado</p>
+                      <p className={`font-medium ${webhookDetails.position.side === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+                        {webhookDetails.position.side}
+                      </p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Quantidade</p>
+                      <p className="text-white font-medium">{webhookDetails.position.quantity}</p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">Preço Médio de Entrada</p>
+                      <p className="text-white font-medium">${webhookDetails.position.avg_entry_price?.toFixed(6)}</p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">PNL Realizado</p>
+                      <p className={`font-medium ${webhookDetails.position.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${webhookDetails.position.realized_pnl?.toFixed(6)}
+                      </p>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded">
+                      <p className="text-sm text-gray-400">PNL Não Realizado</p>
+                      <p className={`font-medium ${webhookDetails.position.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${webhookDetails.position.unrealized_pnl?.toFixed(6)}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {webhookDetails.position.opened_at && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                      <div className="bg-gray-700 p-3 rounded">
+                        <p className="text-sm text-gray-400">Aberta em</p>
+                        <p className="text-white font-medium">
+                          {new Date(webhookDetails.position.opened_at).toLocaleString('pt-BR')}
+                        </p>
+                      </div>
+                      {webhookDetails.position.closed_at && (
+                        <div className="bg-gray-700 p-3 rounded">
+                          <p className="text-sm text-gray-400">Fechada em</p>
+                          <p className="text-white font-medium">
+                            {new Date(webhookDetails.position.closed_at).toLocaleString('pt-BR')}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Order ID */}
+              {webhookDetails.webhook_execution.order_id && (
+                <div className="mb-6">
+                  <h4 className="text-lg font-medium text-white mb-3">ID da Ordem</h4>
+                  <div className="bg-gray-700 p-3 rounded">
+                    <p className="text-white font-mono text-sm break-all">
+                      {webhookDetails.webhook_execution.order_id}
+                    </p>
                   </div>
                 </div>
               )}

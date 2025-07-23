@@ -68,7 +68,7 @@ class PnlCalculator:
             )
         ).first()
         
-        if trade.trade_type == "CLOSE":
+        if trade.trade_type == "CLOSE" or trade.trade_type == "FECHAMENTO":
             # Fechar posição existente
             if position:
                 position.is_open = False
@@ -104,11 +104,45 @@ class PnlCalculator:
             # Dollar Cost Average - aumentar posição
             if position:
                 self._update_position_dca(position, trade)
+            else:
+                # Se não há posição, criar nova (DCA pode ser entrada inicial)
+                position = WebhookPosition(
+                    webhook_config_id=trade.webhook_config_id,
+                    user_id=trade.user_id,
+                    asset_name=trade.asset_name,
+                    side=trade.side,
+                    quantity=trade.quantity,
+                    avg_entry_price=trade.price,
+                    leverage=trade.leverage,
+                    total_fees=trade.fees,
+                    opened_at=trade.timestamp,
+                    last_updated=trade.timestamp
+                )
+                self.db.add(position)
         
-        elif trade.trade_type == "REDUCE":
+        elif trade.trade_type == "REDUCE" or trade.trade_type == "REDUCAO":
             # Reduzir posição
             if position:
                 self._reduce_position(position, trade)
+            else:
+                # Se não há posição para reduzir, tratar como fechamento de posição implícita
+                # Criar uma posição temporária para calcular o PNL
+                position = WebhookPosition(
+                    webhook_config_id=trade.webhook_config_id,
+                    user_id=trade.user_id,
+                    asset_name=trade.asset_name,
+                    side=trade.side,
+                    quantity=trade.quantity,
+                    avg_entry_price=trade.price,  # Assumir preço atual como base
+                    leverage=trade.leverage,
+                    total_fees=trade.fees,
+                    realized_pnl=0.0,  # Sem PNL se não há histórico
+                    is_open=False,  # Já fechada
+                    opened_at=trade.timestamp,
+                    closed_at=trade.timestamp,
+                    last_updated=trade.timestamp
+                )
+                self.db.add(position)
         
         self.db.commit()
     

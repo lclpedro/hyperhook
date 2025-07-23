@@ -1,0 +1,10 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+Sempre utilize .env/bin/activate
+Execute primeiro o source .env/bin/activate e somente depois a execução da app 
+sempre que for criar migration, crie utilizando alembic
+sempre que precisar instalar algum pacote utilize pip install e adicione no requirements.txt
+
