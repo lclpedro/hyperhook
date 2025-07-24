@@ -367,8 +367,8 @@ const DashboardScreen = ({ token }) => {
       try {
         setLoading(true);
         const [summary, assets] = await Promise.all([
-          api.get(`/api/dashboard/summary?period=${selectedPeriod}`, token),
-          api.get(`/api/dashboard/assets?period=${selectedPeriod}`, token)
+          api.get(`/api/dashboard/summary?period=${selectedPeriod}`),
+          api.get(`/api/dashboard/assets?period=${selectedPeriod}`)
         ]);
         setDashboardData(summary);
         setAssetsPerformance(assets);
@@ -380,11 +380,32 @@ const DashboardScreen = ({ token }) => {
     };
 
     fetchDashboardData();
-  }, [token, selectedPeriod]);
+  }, [selectedPeriod]);
+
+  const recalculatePnl = async () => {
+    try {
+      setLoading(true);
+      await api.post('/api/dashboard/recalculate-pnl');
+      
+      // Recarregar dados após recálculo
+      const [summary, assets] = await Promise.all([
+        api.get(`/api/dashboard/summary?period=${selectedPeriod}`),
+        api.get(`/api/dashboard/assets?period=${selectedPeriod}`)
+      ]);
+      setDashboardData(summary);
+      setAssetsPerformance(assets);
+      
+      alert('PNL recalculado com sucesso! 🎉');
+    } catch (err) {
+      alert(`Erro ao recalcular PNL: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchAssetDetails = async (asset) => {
     try {
-      const details = await api.get(`/api/dashboard/assets/${asset}?period=${selectedPeriod}`, token);
+      const details = await api.get(`/api/dashboard/assets/${asset}?period=${selectedPeriod}`);
       setAssetDetails(details);
       setSelectedAsset(asset);
       // Buscar webhooks também
@@ -396,7 +417,7 @@ const DashboardScreen = ({ token }) => {
 
   const fetchWebhookExecutions = async (asset, page = 1, limit = 10) => {
     try {
-      const response = await api.get(`/api/dashboard/assets/${asset}/webhooks?page=${page}&limit=${limit}`, token);
+      const response = await api.get(`/api/dashboard/assets/${asset}/webhooks?page=${page}&limit=${limit}`);
       setWebhookExecutions(response.webhooks);
       setWebhookPagination(response.pagination);
     } catch (err) {
@@ -407,7 +428,7 @@ const DashboardScreen = ({ token }) => {
   const fetchWebhookDetails = async (webhookId) => {
     try {
       console.log('Fetching webhook details for ID:', webhookId);
-      const details = await api.get(`/api/dashboard/webhooks/${webhookId}`, token);
+      const details = await api.get(`/api/dashboard/webhooks/${webhookId}`);
       console.log('Webhook details received:', details);
       setWebhookDetails(details);
       setSelectedWebhook(webhookId);
@@ -484,7 +505,16 @@ const DashboardScreen = ({ token }) => {
       {/* Assets Performance */}
       <div className="bg-gray-800 rounded-lg shadow-md border border-gray-700">
         <div className="p-6 border-b border-gray-700">
-          <h3 className="text-lg font-semibold text-white">Performance por Ativo</h3>
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-white">Performance por Ativo</h3>
+            <button
+              onClick={recalculatePnl}
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white text-sm font-medium rounded-md transition-colors"
+            >
+              {loading ? 'Recalculando...' : '🔄 Recalcular PNL'}
+            </button>
+          </div>
         </div>
         <div className="p-6">
           {assetsPerformance.length === 0 ? (

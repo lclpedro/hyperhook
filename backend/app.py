@@ -1532,6 +1532,26 @@ def create_account_snapshot(
             detail=f"Erro ao criar snapshot: {str(e)}"
         )
 
+@app.post("/api/dashboard/recalculate-pnl")
+def recalculate_user_pnl(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Recalcula todos os PNLs do usuário"""
+    try:
+        from pnl_calculator import PnlCalculator
+        pnl_calculator = PnlCalculator(db)
+        
+        pnl_calculator.recalculate_all_pnl_summaries(current_user.id)
+        
+        return {"message": "PNL recalculado com sucesso"}
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao recalcular PNL: {str(e)}"
+        )
+
 @app.get("/api/dashboard/snapshots", response_model=List[AccountSnapshotResponse])
 def get_account_snapshots(
     start_date: Optional[date] = None,
