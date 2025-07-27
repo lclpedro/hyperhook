@@ -3,11 +3,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
-from app import (
+from domain.models import (
     WebhookTrade, WebhookPosition, WebhookPnlSummary, 
     User, WebhookConfig
 )
-from hyperliquid_client import HyperliquidClient
+from infrastructure.external.hyperliquid_client import HyperliquidClient
 
 class PnlCalculator:
     def __init__(self, db: Session):

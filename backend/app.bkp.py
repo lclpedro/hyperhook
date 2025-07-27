@@ -684,165 +684,6 @@ def get_meta():
         return meta
 
 
-@app.post("/webhook/trigger/{user_uuid}/{asset_name}")
-def webhook_trigger(user_uuid: str, asset_name: str, payload: WebhookTriggerPayload, request: Request, db: Session = Depends(get_db)):
-    """ATUALIZADO: Processa webhooks do TradingView com diferentes formatos de payload e registra logs de auditoria."""
-    
-    # Serializar o payload para logs
-    request_body = payload.model_dump_json()
-    
-    # Encontrar usuário
-    user = db.query(User).filter(User.uuid == user_uuid).first()
-    if not user:
-        error_msg = "URL de Webhook inválida (usuário não encontrado)"
-        return HTTPException(status_code=404, detail=error_msg)
-
-    # Validação do segredo
-    if payload.secret != user.webhook_secret:
-        error_msg = "Segredo de webhook inválido"
-        return HTTPException(status_code=403, detail=error_msg)
-
-    # Encontrar configuração do webhook
-    config = db.query(WebhookConfig).filter(WebhookConfig.user_id == user.id, WebhookConfig.asset_name == asset_name).first()
-    if not config or not user.wallet:
-        error_msg = f"Configuração de webhook ou carteira inválida para este ativo '{asset_name}'"
-        return HTTPException(status_code=404, detail=error_msg)
-
-    print(f"ORDEM RECEBIDA: Usuário {user.id}, Ativo {asset_name}")
-    print(f"Payload completo: {payload.model_dump()}")
-    print(f"Config encontrada: ID={config.id}, Leverage={config.leverage}, Max=${config.max_usd_value}")
-    
-    try:
-        secret_key = decrypt_data(user.wallet.encrypted_secret_key)
-        if not secret_key:
-            error_msg = "Chave privada não configurada"
-            create_webhook_log(db, config, request, request_body, 500, "", False, error_msg)
-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, error_msg)
-
-        client = HyperliquidClient()
-        
-        # Extrair dados do payload TradingView (formato único)
-        action = payload.data.action
-        contracts = payload.data.contracts
-        symbol = payload.symbol
-        price_data = payload.price
-        user_info = payload.user_info
-        
-        # Determinar o tamanho da ordem
-        order_size = None
-        
-        # 1. Prioridade: usar contracts do TradingView (FORÇAR casas decimais corretas)
-        if contracts:
-            try:
-                tv_size = float(contracts)
-                # FORÇA as casas decimais corretas para o ativo
-                order_size = client.force_valid_order_size(hyperliquid_asset, tv_size)
-                print(f"📺 TradingView: {tv_size} → {order_size} (forçado para {hyperliquid_asset})")
-            except (ValueError, TypeError):
-                print(f"Erro ao converter contracts '{contracts}' para float")
-        
-        # 2. Fallback: calcular baseado no valor máximo configurado
-        if order_size is None:
-            order_size = client.calculate_order_size(hyperliquid_asset, config.max_usd_value)
-            print(f"Usando valor máximo configurado: {order_size} (baseado em ${config.max_usd_value})")
-        
-        # Validar e ajustar o tamanho da ordem para as regras da Hyperliquid
-        order_size = client.validate_and_fix_order_size(hyperliquid_asset, order_size)
-        print(f"✅ TAMANHO VALIDADO: {order_size}")
-        
-        is_buy = action.lower() in ['buy', 'long']
-        
-        # Determinar o preço
-        limit_price = None
-        if price_data and str(price_data).strip():
-            try:
-                limit_price = float(price_data)
-                print(f"Usando preço do TradingView: {limit_price}")
-            except (ValueError, TypeError):
-                print(f"Erro ao converter price '{price_data}' para float")
-        
-        # Usar o leverage configurado no webhook
-        leverage_to_use = getattr(config, 'leverage', 1)
-        print(f"Usando leverage configurado: {leverage_to_use}x")
-        
-        result = client.place_order(
-            secret_key=secret_key,
-            asset_name=hyperliquid_asset,
-            is_buy=is_buy,
-            size=order_size,
-            limit_price=limit_price,
-            stop_loss=None,  # Removido - não está no novo formato
-            take_profit=None,  # Removido - não está no novo formato
-            comment=user_info,  # Usando user_info como comentário
-            is_live_trading=bool(config.is_live_trading),  # NOVO: Flag para trading real
-            leverage=leverage_to_use  # NOVO: Aplicar leverage configurado
-        )
-        
-        print(f"Resultado da Hyperliquid: {result}")
-        
-        response_data = {
-            "status": "sucesso", 
-            "details": result,
-            "processed_data": {
-                "action": action,
-                "size": order_size,
-                "price": limit_price,
-                "leverage": leverage_to_use,
-                "asset": hyperliquid_asset,
-                "original_asset": asset_name,
-                "symbol": symbol,
-                "user_info": user_info
-            }
-        }
-        
-        # NOVO: Registrar trade no sistema de PNL
-        try:
-            from pnl_calculator import PnlCalculator
-            pnl_calculator = PnlCalculator(db)
-            
-            # Usar o tipo de trade da análise inteligente
-            side = "LONG" if is_buy else "SHORT"
-            
-            # Calcular valor USD
-            usd_value = order_size * (limit_price if limit_price else 0)
-            
-            # Registrar trade
-            pnl_calculator.record_trade(
-                webhook_config_id=config.id,
-                user_id=user.id,
-                asset_name=asset_name,
-                trade_type=action, # Use action from payload
-                side=side,
-                quantity=order_size,
-                price=limit_price if limit_price else 0,
-                usd_value=usd_value,
-                leverage=leverage_to_use,
-                order_id=result.get('order_id') if isinstance(result, dict) else None,
-                fees=0.0  # Será atualizado posteriormente quando disponível
-            )
-            
-            print(f"✅ Trade registrado no sistema de PNL (tipo: {action})")
-            
-        except Exception as pnl_error:
-            print(f"⚠️ Erro ao registrar trade no PNL: {pnl_error}")
-            # Não falhar o webhook por erro no PNL
-        
-        # Log de sucesso
-        create_webhook_log(db, config, request, request_body, 200, json.dumps(response_data), True)
-        
-        return response_data
-    
-    except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        error_msg = f"Falha ao executar ordem: {str(e) if str(e) else 'Erro desconhecido'}"
-        print(f"ERRO AO PROCESSAR ORDEM: {e}")
-        print(f"TRACEBACK COMPLETO: {error_details}")
-        
-        # Log de erro
-        create_webhook_log(db, config, request, request_body, 500, "", False, error_msg)
-        
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, error_msg)
 
 @app.post("/v1/webhook")
 def generic_webhook_trigger(payload: GenericWebhookPayload, request: Request, db: Session = Depends(get_db)):
@@ -1689,6 +1530,26 @@ def create_account_snapshot(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao criar snapshot: {str(e)}"
+        )
+
+@app.post("/api/dashboard/recalculate-pnl")
+def recalculate_user_pnl(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Recalcula todos os PNLs do usuário"""
+    try:
+        from pnl_calculator import PnlCalculator
+        pnl_calculator = PnlCalculator(db)
+        
+        pnl_calculator.recalculate_all_pnl_summaries(current_user.id)
+        
+        return {"message": "PNL recalculado com sucesso"}
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao recalcular PNL: {str(e)}"
         )
 
 @app.get("/api/dashboard/snapshots", response_model=List[AccountSnapshotResponse])

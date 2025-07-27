@@ -3,12 +3,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, desc
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
-from app import (
+from domain.models import (
     WebhookTrade, WebhookPosition, WebhookPnlSummary, 
     AccountSnapshot, User, WebhookConfig
 )
-from pnl_calculator import PnlCalculator
-from hyperliquid_client import HyperliquidClient
+from infrastructure.services.pnl_calculator import PnlCalculator
+from infrastructure.external.hyperliquid_client import HyperliquidClient
 
 class DashboardService:
     def __init__(self, db: Session):
