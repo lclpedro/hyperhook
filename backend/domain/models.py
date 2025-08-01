@@ -28,11 +28,11 @@ class WebhookConfig(Base):
     __tablename__ = "webhook_config"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
-    asset_name = Column(String(20), nullable=False)
-    hyperliquid_symbol = Column(String(20), nullable=True)  # Símbolo personalizado para Hyperliquid
+    trading_view_symbol = Column(String(20), nullable=False)
+    hyperliquid_symbol = Column(String(20), nullable=True)
     max_usd_value = Column(Float, nullable=False)
-    leverage = Column(Integer, default=1, nullable=False)  # Leverage configurável
-    is_live_trading = Column(Boolean, default=False, nullable=False)  # Flag para trading real
+    leverage = Column(Integer, default=1, nullable=False)
+    is_live_trading = Column(Boolean, default=False, nullable=False)
     user = relationship("User", back_populates="webhooks")
     logs = relationship("WebhookLog", back_populates="webhook_config", cascade="all, delete-orphan")
 

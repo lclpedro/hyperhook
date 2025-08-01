@@ -1,4 +1,4 @@
-def analyze_trade_intent(client, user_address, hyperliquid_asset, action, position_size_str, contracts_str):
+def analyze_trade_intent(client, user_address, hyperliquid_asset, action, position_size_str, contracts_str, db_session=None):
     """
     Analisa a intenção de trading para determinar se é:
     - Fechamento de posição (position_size = 0)
@@ -8,23 +8,49 @@ def analyze_trade_intent(client, user_address, hyperliquid_asset, action, positi
     Retorna: (tipo_operacao, quantidade_ajustada, detalhes)
     """
     try:
-        # Obter posições atuais do usuário
-        user_state = client.get_user_state(user_address)
         current_positions = {}
         
-        if user_state and "assetPositions" in user_state:
-            for pos in user_state["assetPositions"]:
-                if "position" in pos:
-                    position_data = pos["position"]
-                    coin = position_data.get("coin", "")
-                    size = float(position_data.get("szi", "0"))
-                    if size != 0:  # Apenas posições abertas
-                        current_positions[coin] = {
-                            "size": size,
-                            "side": "LONG" if size > 0 else "SHORT",
-                            "abs_size": abs(size),
-                            "unrealized_pnl": float(position_data.get("unrealizedPnl", "0"))
-                        }
+        # Se temos uma sessão de DB, usar dados locais para simulação
+        if db_session:
+            from domain.models import WebhookPosition
+            
+            # Buscar posições abertas no banco local
+            open_positions = db_session.query(WebhookPosition).filter(
+                WebhookPosition.asset_name == hyperliquid_asset,
+                WebhookPosition.is_open == True
+            ).all()
+            
+            if open_positions:
+                # Calcular posição líquida
+                total_long = sum(pos.quantity for pos in open_positions if pos.side == "LONG")
+                total_short = sum(pos.quantity for pos in open_positions if pos.side == "SHORT")
+                net_size = total_long - total_short
+                
+                if net_size != 0:
+                    current_positions[hyperliquid_asset] = {
+                        "size": net_size,
+                        "side": "LONG" if net_size > 0 else "SHORT",
+                        "abs_size": abs(net_size),
+                        "unrealized_pnl": 0.0
+                    }
+                    print(f"🔍 Posição simulada do banco: {current_positions[hyperliquid_asset]}")
+        else:
+            # Usar API da Hyperliquid (modo normal)
+            user_state = client.get_user_state(user_address)
+            
+            if user_state and "assetPositions" in user_state:
+                for pos in user_state["assetPositions"]:
+                    if "position" in pos:
+                        position_data = pos["position"]
+                        coin = position_data.get("coin", "")
+                        size = float(position_data.get("szi", "0"))
+                        if size != 0:  # Apenas posições abertas
+                            current_positions[coin] = {
+                                "size": size,
+                                "side": "LONG" if size > 0 else "SHORT",
+                                "abs_size": abs(size),
+                                "unrealized_pnl": float(position_data.get("unrealizedPnl", "0"))
+                            }
         
         print(f"🔍 Posições atuais: {current_positions}")
         

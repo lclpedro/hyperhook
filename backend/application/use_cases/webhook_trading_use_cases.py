@@ -17,7 +17,7 @@ def process_generic_webhook(payload: GenericWebhookPayload, request: Request, db
     request_body = payload.model_dump_json()
     
     # Extrair asset name do symbol (ex: BTCUSDT -> BTC)
-    asset_name = extract_asset_from_symbol(payload.symbol)
+    trading_view_symbol = extract_asset_from_symbol(payload.symbol)
     
     # Encontrar usuário
     user = db.query(User).filter(User.uuid == payload.user_uuid).first()
@@ -31,13 +31,13 @@ def process_generic_webhook(payload: GenericWebhookPayload, request: Request, db
         raise HTTPException(status_code=403, detail=error_msg)
 
     # Encontrar configuração do webhook para este ativo
-    config = _find_webhook_config(db, user.id, asset_name)
+    config = _find_webhook_config(db, user.id, trading_view_symbol)
     
     if not config or not user.wallet:
-        error_msg = f"Configuração de webhook não encontrada para o ativo '{asset_name}' (extraído de '{payload.symbol}'). Configure este ativo na interface primeiro."
+        error_msg = f"Configuração de webhook não encontrada para o ativo '{trading_view_symbol}' (extraído de '{payload.symbol}'). Configure este ativo na interface primeiro."
         raise HTTPException(status_code=404, detail=error_msg)
 
-    print(f"🔥 WEBHOOK GENÉRICO: Usuário {user.id}, Symbol {payload.symbol} → Ativo {asset_name}")
+    print(f"🔥 WEBHOOK GENÉRICO: Usuário {user.id}, Symbol {payload.symbol} → Ativo {trading_view_symbol}")
     print(f"Payload completo: {payload.model_dump()}")
     print(f"Config encontrada: ID={config.id}, Leverage={config.leverage}, Max=${config.max_usd_value}, Live={config.is_live_trading}")
     
@@ -60,16 +60,16 @@ def process_generic_webhook(payload: GenericWebhookPayload, request: Request, db
         position_size = payload.data.position_size
         
         # Determinar ativo da Hyperliquid e se é personalizado
-        hyperliquid_asset, is_custom_asset = _determine_hyperliquid_asset(client, config, asset_name)
+        hyperliquid_asset, is_custom_asset = _determine_hyperliquid_asset(client, config, trading_view_symbol)
         
         # Ajustar quantidade para ativos personalizados
         quantity_multiplier, adjusted_contracts, adjusted_position_size = _adjust_quantities(
-            client, asset_name, hyperliquid_asset, is_custom_asset, contracts, position_size
+            client, trading_view_symbol, hyperliquid_asset, is_custom_asset, contracts, position_size
         )
         
         # Análise inteligente da intenção de trading
         trade_type, adjusted_size, trade_details = _analyze_trading_intent(
-            client, user.wallet.public_address, hyperliquid_asset, action, adjusted_position_size, adjusted_contracts
+            client, user.wallet.public_address, hyperliquid_asset, action, adjusted_position_size, adjusted_contracts, db
         )
         
         # Determinar tamanho final da ordem
@@ -81,8 +81,8 @@ def process_generic_webhook(payload: GenericWebhookPayload, request: Request, db
         
         is_buy = action.lower() in ['buy', 'long']
         
-        # Determinar preço limite
-        limit_price = _determine_limit_price(price_data)
+        # Determinar preço limite com validação
+        limit_price = _determine_limit_price(price_data, client, hyperliquid_asset)
         
         # Usar leverage configurado
         leverage_to_use = getattr(config, 'leverage', 1)
@@ -114,7 +114,7 @@ def process_generic_webhook(payload: GenericWebhookPayload, request: Request, db
                 "size": order_size,
                 "price": limit_price,
                 "leverage": leverage_to_use,
-                "asset": asset_name,
+                "asset": trading_view_symbol,
                 "hyperliquid_asset": hyperliquid_asset,
                 "symbol": symbol,
                 "user_info": user_info,
@@ -137,7 +137,7 @@ def process_generic_webhook(payload: GenericWebhookPayload, request: Request, db
         }
         
         # Registrar trade no sistema de PNL
-        _record_pnl_trade(db, config, user.id, asset_name, trade_type, is_buy, order_size, limit_price, leverage_to_use, result)
+        _record_pnl_trade(db, config, user.id, trading_view_symbol, trade_type, is_buy, order_size, limit_price, leverage_to_use, result)
         
         # Log de sucesso
         create_webhook_log(db, config, request, request_body, 200, json.dumps(response_data), True)
@@ -156,57 +156,57 @@ def process_generic_webhook(payload: GenericWebhookPayload, request: Request, db
         
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, error_msg)
 
-def _find_webhook_config(db: Session, user_id: int, asset_name: str) -> WebhookConfig:
+def _find_webhook_config(db: Session, user_id: int, trading_view_symbol: str) -> WebhookConfig:
     """Encontra configuração do webhook para o ativo"""
-    # Primeiro tenta buscar pelo asset_name (ativo da Hyperliquid)
+    # Primeiro tenta buscar pelo trading_view_symbol
     config = db.query(WebhookConfig).filter(
-        WebhookConfig.user_id == user_id, 
-        WebhookConfig.asset_name == asset_name
+        WebhookConfig.user_id == user_id,
+        WebhookConfig.trading_view_symbol == trading_view_symbol
     ).first()
     
     # Se não encontrou, tenta buscar pelo hyperliquid_symbol (símbolo do TradingView)
     if not config:
         config = db.query(WebhookConfig).filter(
             WebhookConfig.user_id == user_id, 
-            WebhookConfig.hyperliquid_symbol == asset_name
+            WebhookConfig.hyperliquid_symbol == trading_view_symbol
         ).first()
     
     return config
 
-def _determine_hyperliquid_asset(client: HyperliquidClient, config: WebhookConfig, asset_name: str) -> tuple[str, bool]:
+def _determine_hyperliquid_asset(client: HyperliquidClient, config: WebhookConfig, trading_view_symbol: str) -> tuple[str, bool]:
     """Determina o ativo da Hyperliquid e se é personalizado"""
     # Verificar se há configuração manual
-    if config.hyperliquid_symbol and config.hyperliquid_symbol != asset_name:
+    if config.hyperliquid_symbol and config.hyperliquid_symbol != trading_view_symbol:
         hyperliquid_asset = config.hyperliquid_symbol
         is_custom_asset = True
-        print(f"🔄 ATIVO PERSONALIZADO (manual): {asset_name} → {hyperliquid_asset}")
+        print(f"🔄 ATIVO PERSONALIZADO (manual): {trading_view_symbol} → {hyperliquid_asset}")
     else:
         # Verificar se o ativo existe na Hyperliquid diretamente
         try:
-            client.get_asset_info(asset_name)
-            hyperliquid_asset = asset_name
+            client.get_asset_info(trading_view_symbol)
+            hyperliquid_asset = trading_view_symbol
             is_custom_asset = False
-            print(f"🔄 ATIVO ORIGINAL: {asset_name} (existe na Hyperliquid)")
+            print(f"🔄 ATIVO ORIGINAL: {trading_view_symbol} (existe na Hyperliquid)")
         except:
             # Tentar com prefixo 'k' minúsculo
             try:
-                k_asset = f"k{asset_name}"
+                k_asset = f"k{trading_view_symbol}"
                 client.get_asset_info(k_asset)
                 hyperliquid_asset = k_asset
                 is_custom_asset = True
-                print(f"🔄 ATIVO PERSONALIZADO (auto-detectado): {asset_name} → {hyperliquid_asset}")
+                print(f"🔄 ATIVO PERSONALIZADO (auto-detectado): {trading_view_symbol} → {hyperliquid_asset}")
             except:
-                hyperliquid_asset = asset_name
-                is_custom_asset = False
-                print(f"⚠️ ATIVO NÃO ENCONTRADO: usando {asset_name} (pode falhar)")
+                hyperliquid_asset = trading_view_symbol
+        is_custom_asset = False
+        print(f"⚠️ ATIVO NÃO ENCONTRADO: usando {trading_view_symbol} (pode falhar)")
     
     return hyperliquid_asset, is_custom_asset
 
-def _adjust_quantities(client: HyperliquidClient, asset_name: str, hyperliquid_asset: str, 
+def _adjust_quantities(client: HyperliquidClient, trading_view_symbol: str, hyperliquid_asset: str, 
                       is_custom_asset: bool, contracts: str, position_size: str) -> tuple[float, str, str]:
     """Ajusta quantidades para ativos personalizados"""
     if is_custom_asset:
-        quantity_multiplier = calculate_quantity_multiplier(asset_name, hyperliquid_asset, client)
+        quantity_multiplier = calculate_quantity_multiplier(trading_view_symbol, hyperliquid_asset, client)
         print(f"📊 MULTIPLICADOR DE QUANTIDADE (personalizado): {quantity_multiplier}x")
     else:
         quantity_multiplier = 1.0
@@ -232,7 +232,7 @@ def _adjust_quantities(client: HyperliquidClient, asset_name: str, hyperliquid_a
     return quantity_multiplier, contracts, position_size
 
 def _analyze_trading_intent(client: HyperliquidClient, user_address: str, hyperliquid_asset: str, 
-                           action: str, position_size: str, contracts: str) -> tuple[str, float, dict]:
+                           action: str, position_size: str, contracts: str, db: Session) -> tuple[str, float, dict]:
     """Analisa a intenção de trading"""
     print(f"\n🧠 ANALISANDO INTENÇÃO DE TRADING...")
     print(f"Action: {action}, Contracts: {contracts}, Position Size: {position_size}")
@@ -244,7 +244,8 @@ def _analyze_trading_intent(client: HyperliquidClient, user_address: str, hyperl
             hyperliquid_asset=hyperliquid_asset,
             action=action,
             position_size_str=position_size,
-            contracts_str=contracts
+            contracts_str=contracts,
+            db_session=db
         )
         
         print(f"🎯 RESULTADO DA ANÁLISE:")
@@ -288,18 +289,30 @@ def _determine_order_size(client: HyperliquidClient, hyperliquid_asset: str, adj
     
     return order_size
 
-def _determine_limit_price(price_data) -> float:
-    """Determina o preço limite da ordem"""
+def _determine_limit_price(price_data, client: HyperliquidClient = None, trading_view_symbol: str = None) -> float:
+    """Determina o preço limite da ordem com validação"""
     limit_price = None
     if price_data and str(price_data).strip():
         try:
-            limit_price = float(price_data)
-            print(f"Usando preço do TradingView: {limit_price}")
+            raw_price = float(price_data)
+            print(f"Preço bruto do TradingView: {raw_price}")
+            
+            # Se temos cliente e nome do ativo, validar o preço
+            if client and trading_view_symbol:
+                try:
+                    limit_price = client.validate_and_fix_price(trading_view_symbol, raw_price)
+                    print(f"Preço validado: {raw_price} → {limit_price}")
+                except Exception as e:
+                    print(f"⚠️ Erro na validação de preço: {e}")
+                    limit_price = raw_price
+            else:
+                limit_price = raw_price
+                
         except (ValueError, TypeError):
             print(f"Erro ao converter price '{price_data}' para float")
     return limit_price
 
-def _record_pnl_trade(db: Session, config: WebhookConfig, user_id: int, asset_name: str, 
+def _record_pnl_trade(db: Session, config: WebhookConfig, user_id: int, trading_view_symbol: str, 
                      trade_type: str, is_buy: bool, order_size: float, limit_price: float, 
                      leverage: int, result: dict):
     """Registra trade no sistema de PNL"""
@@ -310,11 +323,20 @@ def _record_pnl_trade(db: Session, config: WebhookConfig, user_id: int, asset_na
         side = "LONG" if is_buy else "SHORT"
         usd_value = order_size * (limit_price if limit_price else 0)
         
+        # Mapear tipos de trade do analyzer para tipos do PnlCalculator
+        pnl_trade_type = trade_type
+        if trade_type == "NOVA_POSICAO":
+            pnl_trade_type = "BUY" if is_buy else "SELL"
+        elif trade_type == "FECHAMENTO":
+            pnl_trade_type = "CLOSE"
+        elif trade_type == "REDUCAO":
+            pnl_trade_type = "REDUCE"
+        
         pnl_calculator.record_trade(
             webhook_config_id=config.id,
             user_id=user_id,
-            asset_name=asset_name,
-            trade_type=trade_type,
+            asset_name=trading_view_symbol,
+            trade_type=pnl_trade_type,
             side=side,
             quantity=order_size,
             price=limit_price if limit_price else 0,
@@ -324,7 +346,7 @@ def _record_pnl_trade(db: Session, config: WebhookConfig, user_id: int, asset_na
             fees=0.0
         )
         
-        print(f"✅ Trade registrado no sistema de PNL (tipo: {trade_type})")
+        print(f"✅ Trade registrado no sistema de PNL (tipo: {trade_type} -> {pnl_trade_type})")
         
     except Exception as pnl_error:
         print(f"⚠️ Erro ao registrar trade no PNL: {pnl_error}")

@@ -11,7 +11,7 @@ def create_webhook_config(user: User, webhook_data: WebhookCreate, db: Session) 
     existing = db.query(WebhookConfig).filter(
         and_(
             WebhookConfig.user_id == user.id,
-            WebhookConfig.asset_name == webhook_data.assetName
+            WebhookConfig.trading_view_symbol == webhook_data.assetName
         )
     ).first()
     
@@ -24,7 +24,7 @@ def create_webhook_config(user: User, webhook_data: WebhookCreate, db: Session) 
     # Criar nova configuração
     webhook_config = WebhookConfig(
         user_id=user.id,
-        asset_name=webhook_data.assetName,
+        trading_view_symbol=webhook_data.assetName,
         hyperliquid_symbol=webhook_data.hyperliquidSymbol,
         max_usd_value=webhook_data.maxUsdValue,
         leverage=webhook_data.leverage,
@@ -44,7 +44,7 @@ def get_user_webhooks(user: User, db: Session) -> List[WebhookResponse]:
     return [
         WebhookResponse(
             id=webhook.id,
-            assetName=webhook.asset_name,
+            assetName=webhook.trading_view_symbol,
             hyperliquidSymbol=webhook.hyperliquid_symbol,
             maxUsdValue=webhook.max_usd_value,
             leverage=webhook.leverage,

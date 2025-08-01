@@ -100,6 +100,40 @@ class HyperliquidClient:
         size = max_usd_value / price
         validated_size = self.validate_and_fix_order_size(asset_name, size)
         return validated_size
+    
+    def validate_and_fix_price(self, asset_name, price, is_spot=False):
+        """
+        Valida e corrige o preço seguindo as regras da Hyperliquid:
+        - 5 dígitos significativos
+        - 6 decimais para perpetuais, 8 decimais para spot
+        - Ajustado pelo szDecimals do ativo
+        """
+        try:
+            if price is None or price <= 0:
+                raise ValueError(f"Preço inválido: {price}")
+            
+            # Converter para float se necessário
+            px = float(price)
+            
+            # Obter informações do ativo
+            asset_info = self.get_asset_info(asset_name)
+            sz_decimals = asset_info["szDecimals"]
+            
+            # Aplicar regra da Hyperliquid: 5 dígitos significativos
+            # e 6 decimais para perps, 8 para spot, ajustado pelo szDecimals
+            max_decimals = (8 if is_spot else 6) - sz_decimals
+            
+            # Arredondar para 5 dígitos significativos primeiro
+            rounded_px = round(float(f"{px:.5g}"), max_decimals)
+            
+            print(f"💰 Preço validado: {price} → {rounded_px} (max_decimals: {max_decimals}, szDecimals: {sz_decimals})")
+            
+            return rounded_px
+            
+        except Exception as e:
+            print(f"❌ Erro ao validar preço {price} para {asset_name}: {e}")
+            # Em caso de erro, retornar o preço original arredondado para 5 decimais
+            return round(float(price), 5)
 
     def place_order(self, secret_key, asset_name, is_buy, size, limit_price=None, slippage=0.005, stop_loss=None, take_profit=None, comment=None, is_live_trading=False, leverage=1, retry_count=0):
         """
@@ -147,15 +181,18 @@ class HyperliquidClient:
             use_custom_price = False
             limit_price = None  # Garantir que seja market order
         elif limit_price is not None:
-            price_diff_percent = abs(limit_price - price) / price
+            # Validar e corrigir o preço seguindo as regras da Hyperliquid
+            validated_price = self.validate_and_fix_price(asset_name, limit_price)
+            
+            price_diff_percent = abs(validated_price - price) / price
             if price_diff_percent > 0.05:  # Máximo 5% de diferença
-                print(f"⚠️ Preço fornecido ({limit_price}) está {price_diff_percent:.1%} longe do preço de mercado ({price})")
+                print(f"⚠️ Preço validado ({validated_price}) está {price_diff_percent:.1%} longe do preço de mercado ({price})")
                 print(f"Usando ordem de mercado em vez do preço fornecido")
                 use_custom_price = False
             else:
                 use_custom_price = True
-                final_price = limit_price
-                print(f"Usando preço fornecido: {final_price}")
+                final_price = validated_price
+                print(f"Usando preço validado: {limit_price} → {final_price}")
         
         operation_mode = "Fechamento/Redução" if (is_closing_position or is_reducing_position) else ("Preço Específico" if use_custom_price else "Mercado")
         print(f"💰 Preço de mercado: {price}, Modo: {operation_mode}, Slippage: {slippage:.1%}")

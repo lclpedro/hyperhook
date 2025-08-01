@@ -84,7 +84,7 @@ class GenericWebhookPayload(BaseModel):
 class WebhookTradeResponse(BaseModel):
     id: int
     webhook_config_id: int
-    asset_name: str
+    trading_view_symbol: str
     trade_type: str
     side: str
     quantity: float
@@ -98,7 +98,9 @@ class WebhookTradeResponse(BaseModel):
 class WebhookPositionResponse(BaseModel):
     id: int
     webhook_config_id: int
+    user_id: int
     asset_name: str
+    trading_view_symbol: str
     side: str
     quantity: float
     avg_entry_price: float
@@ -114,7 +116,7 @@ class WebhookPositionResponse(BaseModel):
 
 class WebhookPnlSummaryResponse(BaseModel):
     id: int
-    asset_name: str
+    trading_view_symbol: str
     total_trades: int
     winning_trades: int
     losing_trades: int

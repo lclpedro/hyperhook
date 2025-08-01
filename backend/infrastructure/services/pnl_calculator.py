@@ -46,13 +46,15 @@ class PnlCalculator:
         )
         
         self.db.add(trade)
-        self.db.commit()
+        self.db.flush()
         
         # Atualizar posição
         self._update_position(trade)
         
         # Atualizar resumo PNL
         self._update_pnl_summary(user_id, asset_name)
+        
+        self.db.commit()
         
         return trade
     
@@ -78,7 +80,7 @@ class PnlCalculator:
                     trade.quantity, trade.price, position.side
                 )
                 position.total_fees += trade.fees
-                self.db.commit()
+                self.db.flush()
         
         elif trade.trade_type in ["BUY", "SELL"]:
             # Nova posição
@@ -393,9 +395,45 @@ class PnlCalculator:
         
         for (asset_name,) in assets:
             print(f"\n📊 Recalculando PNL para {asset_name}...")
+            self._reprocess_asset_trades(user_id, asset_name)
             self._update_pnl_summary(user_id, asset_name)
         
         print(f"✅ Recálculo completo para {len(assets)} assets")
+    
+    def _reprocess_asset_trades(self, user_id: int, asset_name: str):
+        """
+        Reprocessa todos os trades de um ativo para corrigir posições que não foram calculadas corretamente
+        """
+        print(f"🔄 Reprocessando trades para {asset_name}...")
+        
+        # Buscar todos os trades do ativo ordenados por data
+        trades = self.db.query(WebhookTrade).filter(
+            and_(
+                WebhookTrade.user_id == user_id,
+                WebhookTrade.asset_name == asset_name
+            )
+        ).order_by(WebhookTrade.timestamp).all()
+        
+        # Limpar posições existentes para recriar
+        existing_positions = self.db.query(WebhookPosition).filter(
+            and_(
+                WebhookPosition.user_id == user_id,
+                WebhookPosition.asset_name == asset_name
+            )
+        ).all()
+        
+        for position in existing_positions:
+            self.db.delete(position)
+        
+        self.db.flush()
+        
+        # Reprocessar cada trade para recriar as posições corretamente
+        for trade in trades:
+            print(f"  📈 Reprocessando trade {trade.id}: {trade.trade_type} {trade.side} {trade.quantity}")
+            self._update_position(trade)
+        
+        self.db.commit()
+        print(f"✅ Reprocessamento completo para {asset_name}: {len(trades)} trades processados")
     
     def get_assets_pnl_summary(self, user_id: int) -> List[WebhookPnlSummary]:
         """Obtém resumo de PNL por ativo"""

@@ -27,7 +27,7 @@ def get_assets_performance(user: User, period: str, db: Session) -> List[Webhook
     return [
         WebhookPnlSummaryResponse(
             id=0,  # Placeholder ID
-            asset_name=asset["asset_name"],
+            trading_view_symbol=asset["asset_name"],
             total_trades=asset["total_trades"],
             winning_trades=asset["winning_trades"],
             losing_trades=asset["losing_trades"],
@@ -46,7 +46,7 @@ def get_assets_performance(user: User, period: str, db: Session) -> List[Webhook
         for asset in assets_data
     ]
 
-def get_asset_detailed_performance(user: User, asset_name: str, period: str, 
+def get_asset_detailed_performance(user: User, trading_view_symbol: str, period: str, 
                                  start_date: Optional[date], end_date: Optional[date], db: Session) -> dict:
     """Obtém performance detalhada de um ativo específico"""
     from dashboard_service import DashboardService
@@ -55,25 +55,18 @@ def get_asset_detailed_performance(user: User, asset_name: str, period: str,
     start_datetime = None
     end_datetime = None
     
-    # Se período foi especificado, calcular datas
-    if not start_date and not end_date:
-        today = date.today()
-        days_map = {"1d": 1, "7d": 7, "30d": 30, "90d": 90}
-        days = days_map.get(period, 7)
-        start_date = today - timedelta(days=days)
-        end_date = today
-    
+    # Apenas aplicar filtros de data se start_date ou end_date foram explicitamente fornecidos
     if start_date:
         start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
     if end_date:
         end_datetime = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
     
     detailed_data = dashboard_service.get_asset_detailed_performance(
-        user.id, asset_name, start_datetime, end_datetime
+        user.id, trading_view_symbol, start_datetime, end_datetime
     )
     return detailed_data
 
-def get_asset_webhook_executions(user: User, asset_name: str, page: int, limit: int, db: Session) -> dict:
+def get_asset_webhook_executions(user: User, trading_view_symbol: str, page: int, limit: int, db: Session) -> dict:
     """Obtém execuções de webhooks paginadas para um ativo específico"""
     # Calcular offset
     offset = (page - 1) * limit
@@ -82,7 +75,7 @@ def get_asset_webhook_executions(user: User, asset_name: str, page: int, limit: 
     trades = db.query(WebhookTrade).filter(
         and_(
             WebhookTrade.user_id == user.id,
-            WebhookTrade.asset_name == asset_name
+            WebhookTrade.asset_name == trading_view_symbol
         )
     ).order_by(desc(WebhookTrade.timestamp)).offset(offset).limit(limit).all()
     
@@ -90,7 +83,7 @@ def get_asset_webhook_executions(user: User, asset_name: str, page: int, limit: 
     total_count = db.query(WebhookTrade).filter(
         and_(
             WebhookTrade.user_id == user.id,
-            WebhookTrade.asset_name == asset_name
+            WebhookTrade.asset_name == trading_view_symbol
         )
     ).count()
     
@@ -170,7 +163,7 @@ def get_webhook_execution_details(user: User, webhook_id: int, db: Session) -> d
         },
         "webhook_config": {
             "id": webhook_config.id if webhook_config else None,
-            "asset_name": webhook_config.asset_name if webhook_config else "Unknown",
+            "trading_view_symbol": webhook_config.trading_view_symbol if webhook_config else "Unknown",
             "max_usd_value": webhook_config.max_usd_value if webhook_config else 0,
             "leverage": webhook_config.leverage if webhook_config else 1,
             "is_live_trading": webhook_config.is_live_trading if webhook_config else False,
@@ -200,12 +193,12 @@ def get_pnl_by_period(user: User, period_request: PnlPeriodRequest, db: Session)
     period_pnl = pnl_calculator.get_pnl_by_period(user.id, start_datetime, end_datetime)
     return period_pnl
 
-def get_user_trades(user: User, limit: int, offset: int, asset_name: Optional[str], db: Session) -> List[WebhookTradeResponse]:
+def get_user_trades(user: User, limit: int, offset: int, trading_view_symbol: Optional[str], db: Session) -> List[WebhookTradeResponse]:
     """Obtém histórico de trades do usuário"""
     filters = [WebhookTrade.user_id == user.id]
     
-    if asset_name:
-        filters.append(WebhookTrade.asset_name == asset_name)
+    if trading_view_symbol:
+        filters.append(WebhookTrade.asset_name == trading_view_symbol)
     
     trades = db.query(WebhookTrade).filter(
         and_(*filters)
@@ -230,15 +223,15 @@ def get_user_trades(user: User, limit: int, offset: int, asset_name: Optional[st
         for trade in trades
     ]
 
-def get_user_positions(user: User, only_open: bool, asset_name: Optional[str], db: Session) -> List[WebhookPositionResponse]:
+def get_user_positions(user: User, only_open: bool, trading_view_symbol: Optional[str], db: Session) -> List[WebhookPositionResponse]:
     """Obtém posições do usuário"""
     filters = [WebhookPosition.user_id == user.id]
     
     if only_open:
         filters.append(WebhookPosition.is_open == True)
     
-    if asset_name:
-        filters.append(WebhookPosition.asset_name == asset_name)
+    if trading_view_symbol:
+        filters.append(WebhookPosition.asset_name == trading_view_symbol)
     
     positions = db.query(WebhookPosition).filter(
         and_(*filters)
@@ -250,6 +243,7 @@ def get_user_positions(user: User, only_open: bool, asset_name: Optional[str], d
             webhook_config_id=position.webhook_config_id,
             user_id=position.user_id,
             asset_name=position.asset_name,
+            trading_view_symbol=position.asset_name,
             side=position.side,
             quantity=position.quantity,
             avg_entry_price=position.avg_entry_price,
@@ -259,9 +253,9 @@ def get_user_positions(user: User, only_open: bool, asset_name: Optional[str], d
             unrealized_pnl=position.unrealized_pnl,
             total_fees=position.total_fees,
             is_open=position.is_open,
-            opened_at=position.opened_at,
-            closed_at=position.closed_at,
-            last_updated=position.last_updated
+            opened_at=position.opened_at.isoformat() if position.opened_at else None,
+            closed_at=position.closed_at.isoformat() if position.closed_at else None,
+            last_updated=position.last_updated.isoformat() if position.last_updated else None
         )
         for position in positions
     ]
@@ -339,3 +333,20 @@ def get_account_snapshots(user: User, limit: int, db: Session) -> List[AccountSn
         )
         for snapshot in snapshots
     ]
+
+def recalculate_user_pnl(user: User, db: Session) -> dict:
+    """Recalcula todos os PNLs do usuário para corrigir trades que não foram calculados corretamente"""
+    try:
+        from infrastructure.services.pnl_calculator import PnlCalculator
+        pnl_calculator = PnlCalculator(db)
+        
+        # Recalcula todos os resumos de PNL
+        pnl_calculator.recalculate_all_pnl_summaries(user.id)
+        
+        return {"message": "PNL recalculado com sucesso"}
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao recalcular PNL: {str(e)}"
+        )
