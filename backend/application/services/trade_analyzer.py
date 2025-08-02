@@ -63,7 +63,7 @@ def analyze_trade_intent(client, user_address, hyperliquid_asset, action, positi
         # Cenário 1: SEM POSIÇÃO ATUAL - Nova posição
         if not current_position:
             print("📈 NOVA POSIÇÃO: Nenhuma posição existente encontrada")
-            return "NOVA_POSICAO", contracts, {
+            return "BUY" if is_buy else "SELL", contracts, {
                 "description": "Abrindo nova posição",
                 "current_position": None,
                 "action_type": "NEW_POSITION"
@@ -80,7 +80,7 @@ def analyze_trade_intent(client, user_address, hyperliquid_asset, action, positi
                 # FORÇAR casas decimais corretas para fechamento
                 forced_close_size = client.force_valid_order_size(hyperliquid_asset, close_size)
                 print(f"🔄 FECHAMENTO: Fechando posição {current_side} de {close_size} → {forced_close_size} {hyperliquid_asset}")
-                return "FECHAMENTO", forced_close_size, {
+                return "CLOSE", forced_close_size, {
                     "description": f"Fechando posição {current_side} de {close_size}",
                     "current_position": current_position,
                     "action_type": "CLOSE_POSITION",
@@ -109,7 +109,7 @@ def analyze_trade_intent(client, user_address, hyperliquid_asset, action, positi
             # FORÇAR casas decimais corretas para redução
             forced_reduction_size = client.force_valid_order_size(hyperliquid_asset, reduction_size)
             print(f"📉 REDUÇÃO: Reduzindo posição {current_side} de {current_position['abs_size']} em {reduction_size} → {forced_reduction_size}")
-            return "REDUCAO", forced_reduction_size, {
+            return "REDUCE", forced_reduction_size, {
                 "description": f"Reduzindo posição {current_side} de {current_position['abs_size']} em {reduction_size}",
                 "current_position": current_position,
                 "action_type": "REDUCE_POSITION",

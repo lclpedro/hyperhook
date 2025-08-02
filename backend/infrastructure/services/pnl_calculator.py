@@ -61,17 +61,15 @@ class PnlCalculator:
     def _update_position(self, trade: WebhookTrade):
         """Atualiza a posição baseada no trade"""
         
-        # Buscar posição existente
-        position = self.db.query(WebhookPosition).filter(
-            and_(
-                WebhookPosition.webhook_config_id == trade.webhook_config_id,
-                WebhookPosition.asset_name == trade.asset_name,
-                WebhookPosition.is_open == True
-            )
-        ).first()
-        
-        if trade.trade_type == "CLOSE" or trade.trade_type == "FECHAMENTO":
-            # Fechar posição existente
+        if trade.trade_type == "CLOSE":
+            position = self.db.query(WebhookPosition).filter(
+                and_(
+                    WebhookPosition.webhook_config_id == trade.webhook_config_id,
+                    WebhookPosition.asset_name == trade.asset_name,
+                    WebhookPosition.is_open == True
+                )
+            ).first()
+            
             if position:
                 position.is_open = False
                 position.closed_at = trade.timestamp
@@ -81,8 +79,17 @@ class PnlCalculator:
                 )
                 position.total_fees += trade.fees
                 self.db.flush()
-        
+                
         elif trade.trade_type in ["BUY", "SELL"]:
+            # Para outros tipos de trade, buscar posição com side específico
+            position = self.db.query(WebhookPosition).filter(
+                and_(
+                    WebhookPosition.webhook_config_id == trade.webhook_config_id,
+                    WebhookPosition.asset_name == trade.asset_name,
+                    WebhookPosition.side == trade.side,
+                    WebhookPosition.is_open == True
+                )
+            ).first()
             # Nova posição
             if not position:
                 position = WebhookPosition(
@@ -104,6 +111,15 @@ class PnlCalculator:
         
         elif trade.trade_type == "DCA":
             # Dollar Cost Average - aumentar posição
+            position = self.db.query(WebhookPosition).filter(
+                and_(
+                    WebhookPosition.webhook_config_id == trade.webhook_config_id,
+                    WebhookPosition.asset_name == trade.asset_name,
+                    WebhookPosition.side == trade.side,
+                    WebhookPosition.is_open == True
+                )
+            ).first()
+            
             if position:
                 self._update_position_dca(position, trade)
             else:
@@ -122,8 +138,17 @@ class PnlCalculator:
                 )
                 self.db.add(position)
         
-        elif trade.trade_type == "REDUCE" or trade.trade_type == "REDUCAO":
+        elif trade.trade_type == "REDUCE":
             # Reduzir posição
+            position = self.db.query(WebhookPosition).filter(
+                and_(
+                    WebhookPosition.webhook_config_id == trade.webhook_config_id,
+                    WebhookPosition.asset_name == trade.asset_name,
+                    WebhookPosition.side == trade.side,
+                    WebhookPosition.is_open == True
+                )
+            ).first()
+            
             if position:
                 self._reduce_position(position, trade)
             else:
@@ -265,7 +290,7 @@ class PnlCalculator:
         # se não houver posições registradas (fallback para compatibilidade)
         if len(closed_positions) == 0 and sequences_analysis["total_sequences"] == 0:
             # Fallback: contar trades de fechamento como trades individuais
-            closing_trades = [t for t in trades if t.trade_type in ["FECHAMENTO", "CLOSE", "REDUCAO", "REDUCE"]]
+            closing_trades = [t for t in trades if t.trade_type in ["CLOSE", "REDUCE"]]
             if closing_trades:
                 # Assumir que trades de fechamento com PNL positivo são vencedores
                 # (isso requer que o PNL seja calculado no momento do trade)
@@ -469,7 +494,7 @@ class PnlCalculator:
             current_sequence.append(trade)
             
             # Uma sequência termina com fechamento ou redução total
-            if trade.trade_type in ["FECHAMENTO", "CLOSE", "REDUCAO", "REDUCE"]:
+            if trade.trade_type in ["CLOSE", "REDUCE"]:
                 if current_sequence:
                     sequences.append(current_sequence.copy())
                     print(f"    ✅ Sequência finalizada com {len(current_sequence)} trades")
@@ -516,8 +541,10 @@ class PnlCalculator:
         exits = []
         
         for trade in sequence:
-            if trade.trade_type in ["FECHAMENTO", "CLOSE", "REDUCAO", "REDUCE"]:
+            if trade.trade_type in ["CLOSE", "REDUCE"]:
                 exits.append(trade)
+            elif trade.trade_type in ["BUY", "SELL", "DCA"]:
+                entries.append(trade)
             else:
                 entries.append(trade)
         

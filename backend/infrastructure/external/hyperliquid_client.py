@@ -173,11 +173,11 @@ class HyperliquidClient:
         final_price = None
         
         # NOVA LÓGICA: Para fechamentos de posição, sempre usar ordem de mercado
-        is_closing_position = comment and ("FECHAMENTO" in comment or "CLOSE" in comment.upper())
-        is_reducing_position = comment and ("REDUCAO" in comment or "REDUCE" in comment.upper())
+        is_closing_position = comment and "CLOSE" in comment.upper()
+        is_reducing_position = comment and "REDUCE" in comment.upper()
         
         if is_closing_position or is_reducing_position:
-            print(f"🔄 Operação de {'fechamento' if is_closing_position else 'redução'} detectada - forçando MARKET ORDER")
+            print(f"🔄 Operação de {'close' if is_closing_position else 'reduce'} detectada - forçando MARKET ORDER")
             use_custom_price = False
             limit_price = None  # Garantir que seja market order
         elif limit_price is not None:
@@ -194,7 +194,7 @@ class HyperliquidClient:
                 final_price = validated_price
                 print(f"Usando preço validado: {limit_price} → {final_price}")
         
-        operation_mode = "Fechamento/Redução" if (is_closing_position or is_reducing_position) else ("Preço Específico" if use_custom_price else "Mercado")
+        operation_mode = "Close/Reduce" if (is_closing_position or is_reducing_position) else ("Preço Específico" if use_custom_price else "Mercado")
         print(f"💰 Preço de mercado: {price}, Modo: {operation_mode}, Slippage: {slippage:.1%}")
 
         if is_live_trading:
@@ -214,7 +214,7 @@ class HyperliquidClient:
                     )
                 else:
                     # Usar market_open() para ordens de mercado (fechamentos, reduções, etc.)
-                    operation_type = "fechamento/redução" if (is_closing_position or is_reducing_position) else "mercado"
+                    operation_type = "close/reduce" if (is_closing_position or is_reducing_position) else "mercado"
                     print(f"📈 Usando ordem de mercado para {operation_type} com slippage: {slippage:.1%}")
                     order_result = exchange.market_open(
                         name=asset_name,

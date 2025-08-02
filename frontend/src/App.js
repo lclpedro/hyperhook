@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { api } from './services';
 import { Header } from './components/layout';
 import { 
   AuthPage, 

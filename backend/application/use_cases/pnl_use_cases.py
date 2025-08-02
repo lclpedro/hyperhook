@@ -9,17 +9,16 @@ from domain.schemas import (
     WebhookPositionResponse, PnlPeriodRequest, AccountSnapshotResponse
 )
 from infrastructure.external.hyperliquid_client import HyperliquidClient
+from application.services.dashboard_service import DashboardService
 
 def get_dashboard_summary(user: User, period: str, db: Session) -> dict:
     """Obtém resumo completo do dashboard"""
-    from dashboard_service import DashboardService
     dashboard_service = DashboardService(db)
     summary = dashboard_service.get_dashboard_summary(user.id, period)
     return summary
 
 def get_assets_performance(user: User, period: str, db: Session) -> List[WebhookPnlSummaryResponse]:
     """Obtém performance por ativo"""
-    from dashboard_service import DashboardService
     dashboard_service = DashboardService(db)
     assets_data = dashboard_service.get_assets_performance(user.id, period)
     

@@ -12,7 +12,7 @@ const DashboardPage = ({ token }) => {
   const [tradeDetails, setTradeDetails] = useState(null);
 
   const calculateTradePnl = (closeExecution, allTrades) => {
-    if (closeExecution.trade_type !== 'FECHAMENTO') return 0;
+    if (closeExecution.trade_type !== 'CLOSE') return 0;
     
     const assetTrades = allTrades.filter(t => t.asset_name === closeExecution.asset_name)
       .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -24,11 +24,11 @@ const DashboardPage = ({ token }) => {
     for (const trade of assetTrades) {
       if (trade.timestamp >= closeExecution.timestamp) break;
       
-      if (trade.trade_type === 'NOVA_POSICAO' || trade.trade_type === 'DCA') {
+      if (trade.trade_type === 'BUY' || trade.trade_type === 'SELL' || trade.trade_type === 'DCA') {
         openTrades.push(trade);
         totalOpenQuantity += trade.quantity;
         totalOpenValue += trade.quantity * trade.price;
-      } else if (trade.trade_type === 'FECHAMENTO') {
+      } else if (trade.trade_type === 'CLOSE') {
         const quantityToRemove = Math.min(trade.quantity, totalOpenQuantity);
         totalOpenQuantity -= quantityToRemove;
         
@@ -63,7 +63,7 @@ const DashboardPage = ({ token }) => {
   const fetchDashboardData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const data = await api.get('/api/dashboard');
+      const data = await api.get('/api/dashboard/');
 
       setAssetPerformance(data.asset_performance || []);
 
@@ -471,7 +471,7 @@ const DashboardPage = ({ token }) => {
                             }) : 'N/A'}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-white">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${execution.trade_type === 'FECHAMENTO' ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${execution.trade_type === 'CLOSE' ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'
                               }`}>
                               {execution.trade_type || 'N/A'}
                             </span>
@@ -499,7 +499,7 @@ const DashboardPage = ({ token }) => {
                               >
                                 👁️ View Webhook
                               </button>
-                              {execution.trade_type === 'FECHAMENTO' && (
+                              {execution.trade_type === 'CLOSE' && (
                                 <button
                                 onClick={() => setTradeDetails(execution)}
                                 className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1"

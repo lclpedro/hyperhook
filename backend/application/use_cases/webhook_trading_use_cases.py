@@ -324,13 +324,16 @@ def _record_pnl_trade(db: Session, config: WebhookConfig, user_id: int, trading_
         usd_value = order_size * (limit_price if limit_price else 0)
         
         # Mapear tipos de trade do analyzer para tipos do PnlCalculator
-        pnl_trade_type = trade_type
-        if trade_type == "NOVA_POSICAO":
-            pnl_trade_type = "BUY" if is_buy else "SELL"
-        elif trade_type == "FECHAMENTO":
+        if trade_type in ["BUY", "SELL"]:
+            pnl_trade_type = trade_type
+        elif trade_type == "CLOSE":
             pnl_trade_type = "CLOSE"
-        elif trade_type == "REDUCAO":
+        elif trade_type == "REDUCE":
             pnl_trade_type = "REDUCE"
+        elif trade_type == "DCA":
+            pnl_trade_type = "DCA"
+        else:
+            pnl_trade_type = trade_type
         
         pnl_calculator.record_trade(
             webhook_config_id=config.id,
